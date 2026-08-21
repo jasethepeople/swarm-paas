@@ -83,3 +83,8 @@
 - [x] Add in-product webhook signing guidance and a collaboration onboarding checklist.
 - [x] Add tests and visual verification for webhook test delivery and collaboration onboarding controls.
 - [x] Verify the onboarding extension workflows and save a release checkpoint.
+- [x] Add a copyable webhook receiver verification aid and a concise recent-delivery inspector.
+- [x] Add a non-transactional Stripe activation readiness checklist with explicit configuration states.
+- [x] Add test coverage and visual verification for the operational-readiness controls.
+- [x] Add targeted automated coverage for billing activation-state fields and webhook delivery-inspector data.
+- [x] Verify the operational-readiness extension workflows and save a release checkpoint.
