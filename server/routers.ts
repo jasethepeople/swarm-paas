@@ -60,7 +60,7 @@ import { diffFileSnapshots } from "./versioning";
 import { routingModels } from "./modelRouting";
 import { canManageOrganization, canModifyMember, invitationMatchesUser } from "./governance";
 import { createBillingCheckout, createBillingPortal } from "./billing";
-import { dispatchOperationalWebhook, encryptWebhookSecret, isSafeWebhookUrl, webhookEventTypes } from "./webhooks";
+import { dispatchOperationalWebhook, dispatchWebhookTest, encryptWebhookSecret, isSafeWebhookUrl, webhookEventTypes } from "./webhooks";
 
 const registryProcedure = protectedProcedure.use(({ ctx, next }) => {
   return consumeRegistryRateLimit(ctx.user.id).then(rate => {
@@ -281,6 +281,12 @@ export const appRouter = router({
       await deleteWebhookEndpoint(organization.id, input.endpointId);
       await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "webhook.removed", targetType: "webhook_endpoint", targetId: input.endpointId });
       return { success: true };
+    }),
+    testDelivery: protectedProcedure.input(z.object({ endpointId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
+      const { organization } = await requireOrganizationManager(ctx.user.id);
+      const result = await dispatchWebhookTest(organization.id, input.endpointId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "webhook.tested", targetType: "webhook_endpoint", targetId: input.endpointId, metadata: JSON.stringify(result) });
+      return result;
     }),
   }),
   billing: router({

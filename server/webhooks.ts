@@ -66,3 +66,21 @@ export async function dispatchOperationalWebhook(organizationId: string, eventTy
     }
   }));
 }
+
+export async function dispatchWebhookTest(organizationId: string, endpointId: string) {
+  const endpoint = (await listWebhookEndpoints(organizationId)).find(candidate => candidate.id === endpointId && candidate.active);
+  if (!endpoint) throw new Error("Webhook endpoint is unavailable");
+  const eventId = `evt_${randomBytes(16).toString("hex")}`;
+  const payload = JSON.stringify({ id: eventId, type: "webhook.test", occurredAt: new Date().toISOString(), data: { test: true, message: "Vellum webhook verification" } });
+  const deliveryId = await createWebhookDelivery({ endpointId: endpoint.id, eventId, eventType: "webhook.test" });
+  try {
+    const secret = decryptWebhookSecret(endpoint.secretCiphertext);
+    const signature = `webhook.test.${createHmac("sha256", secret).update(payload).digest("hex")}`;
+    const outcome = await sendWithRetry(endpoint.url, payload, signature);
+    await completeWebhookDelivery(deliveryId, outcome.delivered ? { status: "delivered", attempts: outcome.attempts, responseStatus: outcome.status } : { status: "failed", attempts: outcome.attempts, responseStatus: outcome.status, errorMessage: outcome.error });
+    return { status: outcome.delivered ? "delivered" as const : "failed" as const, attempts: outcome.attempts, responseStatus: outcome.status };
+  } catch (error) {
+    await completeWebhookDelivery(deliveryId, { status: "failed", attempts: 1, errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Webhook test delivery failed" });
+    return { status: "failed" as const, attempts: 1 };
+  }
+}

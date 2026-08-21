@@ -79,3 +79,7 @@
 - [x] Keep Stripe checkout disabled with clear in-product setup guidance until a VELLUM_STRIPE_PRICE_ID is supplied later.
 - [x] Add Stripe webhook tests for signed test verification, invalid-signature rejection, and persisted subscription identifiers.
 - [x] Verify the collaboration and billing extension workflows and save a release checkpoint.
+- [x] Add an owner-authorized webhook test-delivery action with observable delivery status.
+- [x] Add in-product webhook signing guidance and a collaboration onboarding checklist.
+- [x] Add tests and visual verification for webhook test delivery and collaboration onboarding controls.
+- [x] Verify the onboarding extension workflows and save a release checkpoint.
