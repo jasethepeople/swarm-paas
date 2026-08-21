@@ -137,15 +137,17 @@ export function normalizeGeneratedFiles(files: GeneratedFile[]) {
 
 async function generateProject(prompt: string): Promise<{ project: GeneratedProject; usage?: { prompt_tokens: number; completion_tokens: number } }> {
   try {
-    const response = await invokeLLM({
+    const modelResponse = invokeLLM({
       model: "gpt-5",
-      maxTokens: 12_000,
+      maxTokens: 4_800,
       messages: [
         { role: "system", content: "You are an expert full-stack engineer. Create a small, production-minded React and Node.js micro-application. Return only the requested JSON schema. Include a Dockerfile, a client entry point, a server entry point, a concise package manifest, and only the minimum useful files. Never include secrets." },
         { role: "user", content: `Build an application from this brief:\n${prompt}` },
       ],
       response_format: { type: "json_schema", json_schema: codeSchema },
     });
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Model generation exceeded the 45-second interactive budget")), 45_000));
+    const response = await Promise.race([modelResponse, timeout]);
     const content = response.choices[0]?.message.content;
     if (typeof content !== "string") throw new Error("Model returned no structured application payload");
     const parsed = JSON.parse(content) as GeneratedProject;

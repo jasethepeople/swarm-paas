@@ -18,10 +18,15 @@
 - [x] Design and implement the Invisible Glassmorphism visual system and biometric-style authentication portal.
 - [x] Render safe previews from generated routes, components, and source-manifest information rather than metadata alone.
 - [x] Add schema summaries and preview, export, and delete quick actions to each app in the registry dashboard.
-- [ ] Verify generation, safe preview, and artifact export flows in the browser.
+- [x] Verify generation, safe preview, and artifact export flows in the browser.
+- [x] Confirm the rendered safe preview frame exposes persisted manifest routes, components, and schema in the browser.
+- [x] Expose a browser-verifiable persisted-manifest summary outside the sandboxed preview frame.
+- [x] Surface persisted manifest route, component, and schema counts at the top of the safe preview frame.
+- [x] Confirm the ZIP export completes through the durable artifact URL in the browser.
 - [x] Add comprehensive unit coverage for registry authorization, generation validation, exports, and programmatic endpoints.
 - [x] Add ownership and unauthenticated-access coverage for all registry endpoints.
 - [x] Add anonymous-access tests for every protected registry procedure.
 - [x] Hydrate safe previews from the persisted source manifest and verify manifest route, component, and schema rendering.
 - [x] Expand generation validation coverage for malformed output, duplicate files, prompt rejection, and failure events.
-- [ ] Verify critical browser flows, review project tracking, and create a release checkpoint.
+- [x] Bound live model-generation latency and recover with an artifact-producing fallback when the upstream model is slow.
+- [x] Verify critical browser flows, review project tracking, and create a release checkpoint.
