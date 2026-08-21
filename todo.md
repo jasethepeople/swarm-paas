@@ -1,0 +1,27 @@
+# Project TODO
+
+- [x] Define production architecture boundaries for isolated app runtimes, token streaming, and programmatic access.
+- [x] Provision and secure a persistent Docker runtime for tenant-isolated generated application containers and preview routing. (Superseded when the managed control-plane approach was selected.)
+- [x] Implement managed safe previews and exportable container-ready project bundles without running user containers in the control-plane deployment.
+- [x] Design tenant-aware application registry, generated-file manifest, schema metadata, and durable artifact records.
+- [x] Add authenticated registry APIs with per-user authorization and request-rate limiting.
+- [x] Apply and test request-rate limiting for the authenticated registry tRPC endpoints.
+- [x] Replace the in-memory registry limiter with a database-backed shared limiter for autoscaled deployments.
+- [x] Add endpoint-level authenticated registry tests that verify `TOO_MANY_REQUESTS` enforcement.
+- [x] Implement S3-compatible persistence for generated source manifests and ZIP exports.
+- [x] Implement isolated per-app SQLite database packaging and schema registry metadata.
+- [x] Add a programmatic MCP-compatible HTTP endpoint for generation, registry queries, and artifact retrieval.
+- [x] Implement streamed application-generation workflow with structured React/Node output, validation, and progress events.
+- [x] Build the authenticated prompt studio with live preview panel and syntax-highlighted file-tree explorer.
+- [x] Build the application dashboard with status, creation time, schema summary, preview, export, and delete actions.
+- [x] Implement ZIP download and mock GitHub push workflows with durable re-download links.
+- [x] Design and implement the Invisible Glassmorphism visual system and biometric-style authentication portal.
+- [x] Render safe previews from generated routes, components, and source-manifest information rather than metadata alone.
+- [x] Add schema summaries and preview, export, and delete quick actions to each app in the registry dashboard.
+- [ ] Verify generation, safe preview, and artifact export flows in the browser.
+- [x] Add comprehensive unit coverage for registry authorization, generation validation, exports, and programmatic endpoints.
+- [x] Add ownership and unauthenticated-access coverage for all registry endpoints.
+- [x] Add anonymous-access tests for every protected registry procedure.
+- [x] Hydrate safe previews from the persisted source manifest and verify manifest route, component, and schema rendering.
+- [x] Expand generation validation coverage for malformed output, duplicate files, prompt rejection, and failure events.
+- [ ] Verify critical browser flows, review project tracking, and create a release checkpoint.
