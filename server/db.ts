@@ -1,15 +1,19 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, max, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   builderApiKeys,
   generatedAppArtifacts,
   generatedAppFiles,
   generatedApps,
+  generatedAppVersions,
   InsertUser,
   rateLimitWindows,
+  tenantQuotas,
+  tenantUsage,
   users,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { canReserveTenantGeneration } from "./tenantControls";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -127,6 +131,8 @@ export async function updateGeneratedApp(
   userId: number,
   updates: Partial<{
     name: string;
+    prompt: string;
+    model: string;
     status: "generating" | "ready" | "failed" | "archived";
     summary: string;
     schemaSummary: string;
@@ -247,4 +253,95 @@ export async function consumeSharedRateLimit(key: string, limit: number, windowM
   const state = rows[0];
   if (!state) throw new Error("Rate limit state could not be read");
   return { allowed: state.count <= limit, remaining: Math.max(0, limit - state.count), resetsAt: state.resetsAt.getTime() };
+}
+
+const usagePeriod = () => new Date().toISOString().slice(0, 7);
+const usageId = (userId: number, period: string) => `${userId}:${period}`;
+
+export async function getTenantQuota(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const rows = await db.select().from(tenantQuotas).where(eq(tenantQuotas.userId, userId)).limit(1);
+  if (rows[0]) return rows[0];
+  await db.insert(tenantQuotas).values({ userId, monthlyGenerationLimit: 12, monthlyTokenLimit: 200000 });
+  return (await db.select().from(tenantQuotas).where(eq(tenantQuotas.userId, userId)).limit(1))[0]!;
+}
+
+export async function getTenantUsage(userId: number, period = usagePeriod()) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const rows = await db.select().from(tenantUsage).where(and(eq(tenantUsage.userId, userId), eq(tenantUsage.periodKey, period))).limit(1);
+  return rows[0] || { id: usageId(userId, period), userId, periodKey: period, generationCount: 0, inputTokens: 0, outputTokens: 0, latencyTotalMs: 0, artifactBytes: 0, updatedAt: new Date() };
+}
+
+export async function reserveTenantGeneration(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const [quota, usage] = await Promise.all([getTenantQuota(userId), getTenantUsage(userId)]);
+  if (!canReserveTenantGeneration({ generationCount: usage.generationCount, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, monthlyGenerationLimit: quota.monthlyGenerationLimit, monthlyTokenLimit: quota.monthlyTokenLimit })) {
+    return { allowed: false, quota, usage };
+  }
+  const period = usage.periodKey;
+  if (usage.generationCount === 0) {
+    await db.insert(tenantUsage).values({ id: usageId(userId, period), userId, periodKey: period, generationCount: 1, inputTokens: 0, outputTokens: 0, latencyTotalMs: 0, artifactBytes: 0 });
+  } else {
+    await db.update(tenantUsage).set({ generationCount: usage.generationCount + 1, updatedAt: new Date() }).where(eq(tenantUsage.id, usage.id));
+  }
+  return { allowed: true, quota, usage: { ...usage, generationCount: usage.generationCount + 1 } };
+}
+
+export async function recordTenantGenerationUsage(input: { userId: number; inputTokens: number; outputTokens: number; latencyMs: number; artifactBytes: number }) {
+  const db = await getDb();
+  if (!db) return;
+  const current = await getTenantUsage(input.userId);
+  await db.insert(tenantUsage).values({ id: current.id, userId: input.userId, periodKey: current.periodKey, generationCount: current.generationCount, inputTokens: current.inputTokens + input.inputTokens, outputTokens: current.outputTokens + input.outputTokens, latencyTotalMs: current.latencyTotalMs + input.latencyMs, artifactBytes: current.artifactBytes + input.artifactBytes }).onDuplicateKeyUpdate({
+    set: { inputTokens: current.inputTokens + input.inputTokens, outputTokens: current.outputTokens + input.outputTokens, latencyTotalMs: current.latencyTotalMs + input.latencyMs, artifactBytes: current.artifactBytes + input.artifactBytes, updatedAt: new Date() },
+  });
+}
+
+export async function getTenantAnalytics(userId: number) {
+  const [quota, usage, apps] = await Promise.all([getTenantQuota(userId), getTenantUsage(userId), listGeneratedApps(userId)]);
+  const completed = apps.filter(app => app.status === "ready");
+  return {
+    periodKey: usage.periodKey,
+    quota: { generations: quota.monthlyGenerationLimit, tokens: quota.monthlyTokenLimit },
+    usage: { generations: usage.generationCount, tokens: usage.inputTokens + usage.outputTokens, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, artifactBytes: usage.artifactBytes, averageLatencyMs: completed.length ? Math.round(usage.latencyTotalMs / completed.length) : 0 },
+    models: Object.entries(completed.reduce<Record<string, number>>((acc, app) => { acc[app.model || "fallback"] = (acc[app.model || "fallback"] || 0) + 1; return acc; }, {})).map(([model, generations]) => ({ model, generations })),
+    recentActivity: apps.slice(0, 6).map(app => ({ id: app.id, name: app.name, status: app.status, model: app.model || "fallback", createdAt: app.createdAt, latencyMs: app.latencyMs || 0, tokens: (app.inputTokens || 0) + (app.outputTokens || 0) })),
+  };
+}
+
+export async function updateTenantQuota(userId: number, limits: { monthlyGenerationLimit: number; monthlyTokenLimit: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.insert(tenantQuotas).values({ userId, ...limits }).onDuplicateKeyUpdate({
+    set: { ...limits, updatedAt: new Date() },
+  });
+  return getTenantQuota(userId);
+}
+
+export async function createGeneratedAppVersion(input: { id: string; appId: string; versionNumber: number; label: string; sourceManifestKey?: string; sqliteArtifactKey?: string; exportArtifactKey?: string; schemaSummary?: string; routes?: string; componentTree?: string; metadata?: string; fileSnapshot: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.insert(generatedAppVersions).values(input);
+}
+
+export async function listGeneratedAppVersions(appId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(generatedAppVersions).where(eq(generatedAppVersions.appId, appId)).orderBy(desc(generatedAppVersions.versionNumber));
+}
+
+export async function getGeneratedAppVersion(appId: string, versionId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select().from(generatedAppVersions).where(and(eq(generatedAppVersions.appId, appId), eq(generatedAppVersions.id, versionId))).limit(1);
+  return rows[0];
+}
+
+export async function replaceGeneratedAppFiles(appId: string, files: Array<{ id: string; path: string; language: string; content: string; byteSize: number }>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.delete(generatedAppFiles).where(eq(generatedAppFiles.appId, appId));
+  if (files.length) await db.insert(generatedAppFiles).values(files.map(file => ({ ...file, appId })));
 }

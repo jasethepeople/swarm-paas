@@ -14,9 +14,19 @@ import {
   listGeneratedAppArtifacts,
   listGeneratedAppFiles,
   listGeneratedApps,
+  listGeneratedAppVersions,
+  getGeneratedAppVersion,
+  createGeneratedAppVersion,
+  replaceGeneratedAppFiles,
+  updateGeneratedApp,
+  getTenantAnalytics,
+  getTenantQuota,
+  updateTenantQuota,
 } from "./db";
 import { consumeRegistryRateLimit } from "./rateLimit";
 import { storageGetSignedUrl } from "./storage";
+import { selectableModels } from "./appBuilder";
+import { diffFileSnapshots } from "./versioning";
 
 const registryProcedure = protectedProcedure.use(({ ctx, next }) => {
   return consumeRegistryRateLimit(ctx.user.id).then(rate => {
@@ -79,6 +89,57 @@ export const appRouter = router({
       await deleteGeneratedApp(app.id, ctx.user.id);
       return { success: true };
     }),
+    versions: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
+      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
+      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      let versions = await listGeneratedAppVersions(app.id);
+      if (!versions.length) {
+        const files = await listGeneratedAppFiles(app.id);
+        if (files.length) {
+          await createGeneratedAppVersion({ id: nanoid(18), appId: app.id, versionNumber: 1, label: "Imported baseline", sourceManifestKey: app.sourceManifestKey || undefined, sqliteArtifactKey: app.sqliteArtifactKey || undefined, exportArtifactKey: app.exportArtifactKey || undefined, schemaSummary: app.schemaSummary || undefined, routes: app.routes || undefined, componentTree: app.componentTree || undefined, metadata: JSON.stringify({ name: app.name, summary: app.summary, prompt: app.prompt, model: app.model, previewConfig: app.previewConfig ? JSON.parse(app.previewConfig) : undefined }), fileSnapshot: JSON.stringify(files.map(file => ({ path: file.path, language: file.language, content: file.content }))) });
+          versions = await listGeneratedAppVersions(app.id);
+        }
+      }
+      return versions;
+    }),
+    diff: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), fromVersionId: z.string().min(1).max(32), toVersionId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
+      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
+      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      const [fromVersion, toVersion] = await Promise.all([getGeneratedAppVersion(app.id, input.fromVersionId), getGeneratedAppVersion(app.id, input.toVersionId)]);
+      if (!fromVersion || !toVersion) throw new TRPCError({ code: "NOT_FOUND", message: "Version not found" });
+      const fromFiles = JSON.parse(fromVersion.fileSnapshot) as Array<{ path: string; language: string; content: string }>;
+      const toFiles = JSON.parse(toVersion.fileSnapshot) as Array<{ path: string; language: string; content: string }>;
+      return diffFileSnapshots(fromFiles, toFiles);
+    }),
+    rollback: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), versionId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
+      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
+      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      const target = await getGeneratedAppVersion(app.id, input.versionId);
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Version not found" });
+      const currentFiles = await listGeneratedAppFiles(app.id);
+      const versions = await listGeneratedAppVersions(app.id);
+      await createGeneratedAppVersion({ id: nanoid(18), appId: app.id, versionNumber: Math.max(0, ...versions.map(version => version.versionNumber)) + 1, label: "Pre-rollback safeguard", sourceManifestKey: app.sourceManifestKey || undefined, sqliteArtifactKey: app.sqliteArtifactKey || undefined, exportArtifactKey: app.exportArtifactKey || undefined, schemaSummary: app.schemaSummary || undefined, routes: app.routes || undefined, componentTree: app.componentTree || undefined, metadata: JSON.stringify({ name: app.name, summary: app.summary, prompt: app.prompt, model: app.model, previewConfig: app.previewConfig ? JSON.parse(app.previewConfig) : undefined }), fileSnapshot: JSON.stringify(currentFiles.map(file => ({ path: file.path, language: file.language, content: file.content }))) });
+      const files = JSON.parse(target.fileSnapshot) as Array<{ path: string; language: string; content: string }>;
+      let metadata = target.metadata ? JSON.parse(target.metadata) as { name?: string; summary?: string; prompt?: string; model?: string; previewConfig?: unknown } : undefined;
+      if (!metadata && target.sourceManifestKey) {
+        try {
+          const response = await fetch(await storageGetSignedUrl(target.sourceManifestKey));
+          if (response.ok) {
+            const manifest = await response.json() as { name?: string; summary?: string };
+            const inferredPrompt = manifest.summary?.match(/for:\s*(.+)$/i)?.[1];
+            metadata = { name: manifest.name, summary: manifest.summary, prompt: inferredPrompt, previewConfig: { title: manifest.name, description: manifest.summary } };
+          }
+        } catch { /* Legacy snapshots still restore their source files if manifest metadata is unavailable. */ }
+      }
+      await replaceGeneratedAppFiles(app.id, files.map(file => ({ id: nanoid(18), path: file.path, language: file.language, content: file.content, byteSize: Buffer.byteLength(file.content) })));
+      await updateGeneratedApp(app.id, ctx.user.id, { name: metadata?.name || app.name, summary: metadata?.summary || app.summary || "", prompt: metadata?.prompt || app.prompt, model: metadata?.model || app.model || "gpt-5-mini", previewConfig: metadata?.previewConfig ? JSON.stringify(metadata.previewConfig) : app.previewConfig || "", schemaSummary: target.schemaSummary || "[]", routes: target.routes || "[]", componentTree: target.componentTree || "[]", sourceManifestKey: target.sourceManifestKey || "", sqliteArtifactKey: target.sqliteArtifactKey || "", exportArtifactKey: target.exportArtifactKey || "", sourceBundleKey: target.sourceManifestKey || "", status: "ready" });
+      return { success: true, restoredVersion: target.versionNumber };
+    }),
+  }),
+  analytics: router({
+    overview: protectedProcedure.query(({ ctx }) => getTenantAnalytics(ctx.user.id)),
+    quota: protectedProcedure.query(({ ctx }) => getTenantQuota(ctx.user.id)),
+    updateQuota: protectedProcedure.input(z.object({ monthlyGenerationLimit: z.number().int().min(1).max(1000), monthlyTokenLimit: z.number().int().min(10_000).max(20_000_000) })).mutation(({ ctx, input }) => updateTenantQuota(ctx.user.id, input)),
   }),
   developer: router({
     createApiKey: protectedProcedure.input(z.object({ label: z.string().trim().min(2).max(120) })).mutation(async ({ ctx, input }) => {
@@ -92,6 +153,7 @@ export const appRouter = router({
       });
       return { apiKey: rawKey, endpoint: "/api/mcp" };
     }),
+    models: protectedProcedure.query(() => selectableModels),
   }),
 });
 

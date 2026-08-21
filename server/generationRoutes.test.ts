@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./_core/sdk", () => ({ sdk: { authenticateRequest: vi.fn().mockResolvedValue({ id: 15 }) } }));
 vi.mock("./rateLimit", () => ({ consumeRateLimit: vi.fn().mockReturnValue({ allowed: true, remaining: 5, resetsAt: Date.now() + 60_000 }) }));
-vi.mock("./appBuilder", () => ({ executeAppGeneration: vi.fn().mockImplementation(async ({ onEvent }) => { onEvent({ type: "error", appId: "failed-app", message: "Model output was rejected" }); throw new Error("Model output was rejected"); }) }));
+vi.mock("./appBuilder", () => ({ selectableModels: ["gpt-5-mini"], executeAppGeneration: vi.fn().mockImplementation(async ({ onEvent, prompt }) => { const message = prompt.includes("quota") ? "Tenant generation quota reached for 2026-08" : "Model output was rejected"; onEvent({ type: "error", appId: "failed-app", message }); throw new Error(message); }) }));
 
 import { registerGenerationRoutes } from "./generationRoutes";
 
@@ -37,5 +37,12 @@ describe("generation stream input and failure handling", () => {
     expect(response.code).toBe(200);
     expect(response.stream.join("")).toContain("Model output was rejected");
   });
-});
 
+  it("surfaces exhausted tenant quota from the real HTTP generation entrypoint without creating source output", async () => {
+    const response = responseHarness();
+    await routeHarness()({ body: { prompt: "Build a detailed quota exhaustion verification application" } }, response);
+    expect(response.code).toBe(200);
+    expect(response.stream.join("")).toContain("Tenant generation quota reached");
+    expect(response.stream.join("")).not.toContain('event: file');
+  });
+});

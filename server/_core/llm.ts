@@ -420,6 +420,56 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   return (await response.json()) as InvokeResult;
 }
 
+export async function streamLLMText(params: InvokeParams, onToken: (token: string) => void): Promise<{ content: string; usage?: InvokeResult["usage"] } | null> {
+  assertApiKey();
+  const normalizedResponseFormat = normalizeResponseFormat(params);
+  const payload: Record<string, unknown> = {
+    messages: params.messages.map(normalizeMessage),
+    stream: true,
+  };
+  if (params.model) payload.model = params.model;
+  if (params.tools?.length) payload.tools = params.tools;
+  const toolChoice = normalizeToolChoice(params.toolChoice || params.tool_choice, params.tools);
+  if (toolChoice) payload.tool_choice = toolChoice;
+  const maxTokens = params.max_tokens ?? params.maxTokens;
+  if (typeof maxTokens === "number") payload.max_tokens = maxTokens;
+  if (params.thinking) payload.thinking = params.thinking;
+  if (params.reasoning) payload.reasoning = params.reasoning;
+  if (normalizedResponseFormat) payload.response_format = normalizedResponseFormat;
+
+  const response = await fetchWithBackoff(resolveApiUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "text/event-stream", authorization: `Bearer ${ENV.forgeApiKey}` },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`LLM stream failed: ${response.status} ${response.statusText}`);
+  if (!response.headers.get("content-type")?.includes("text/event-stream") || !response.body) return null;
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let usage: InvokeResult["usage"];
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    buffer += decoder.decode(next.value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() || "";
+    for (const frame of frames) {
+      const data = frame.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+      if (!data || data === "[DONE]") continue;
+      try {
+        const event = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }>; usage?: InvokeResult["usage"] };
+        const token = event.choices?.[0]?.delta?.content;
+        if (token) { content += token; onToken(token); }
+        if (event.usage) usage = event.usage;
+      } catch { /* Ignore provider heartbeat frames. */ }
+    }
+  }
+  return { content, usage };
+}
+
 export type ModelInfo = {
   id: string;
   object: string;

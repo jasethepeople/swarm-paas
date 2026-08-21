@@ -1,0 +1,1 @@
+ALTER TABLE `generated_app_versions` ADD `metadata` longtext;

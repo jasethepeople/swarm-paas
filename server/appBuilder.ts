@@ -6,10 +6,15 @@ import {
   createGeneratedApp,
   createGeneratedAppArtifact,
   createGeneratedAppFile,
+  createGeneratedAppVersion,
   getGeneratedAppForUser,
+  listGeneratedAppVersions,
+  recordTenantGenerationUsage,
+  replaceGeneratedAppFiles,
+  reserveTenantGeneration,
   updateGeneratedApp,
 } from "./db";
-import { invokeLLM } from "./_core/llm";
+import { invokeLLM, streamLLMText } from "./_core/llm";
 import { storagePut } from "./storage";
 
 export type GeneratedFile = { path: string; language: string; content: string };
@@ -25,9 +30,13 @@ export type GeneratedProject = {
 export type GenerationEvent =
   | { type: "status"; message: string; appId: string }
   | { type: "file"; path: string; language: string; content: string; appId: string }
+  | { type: "token"; text: string; appId: string }
   | { type: "artifact"; kind: string; url: string; appId: string }
   | { type: "complete"; appId: string }
   | { type: "error"; message: string; appId: string };
+
+export const selectableModels = ["gpt-5-mini", "gpt-5", "claude-sonnet-4-6", "gemini-3-flash-preview"] as const;
+export type SelectableModel = typeof selectableModels[number];
 
 const codeSchema = {
   name: "generated_micro_application",
@@ -135,19 +144,25 @@ export function normalizeGeneratedFiles(files: GeneratedFile[]) {
   });
 }
 
-async function generateProject(prompt: string): Promise<{ project: GeneratedProject; usage?: { prompt_tokens: number; completion_tokens: number } }> {
+async function generateProject(prompt: string, model: SelectableModel, onToken: (token: string) => void): Promise<{ project: GeneratedProject; usage?: { prompt_tokens: number; completion_tokens: number } }> {
   try {
-    const modelResponse = invokeLLM({
-      model: "gpt-5",
+    const request = {
+      model,
       maxTokens: 4_800,
       messages: [
         { role: "system", content: "You are an expert full-stack engineer. Create a small, production-minded React and Node.js micro-application. Return only the requested JSON schema. Include a Dockerfile, a client entry point, a server entry point, a concise package manifest, and only the minimum useful files. Never include secrets." },
         { role: "user", content: `Build an application from this brief:\n${prompt}` },
       ],
       response_format: { type: "json_schema", json_schema: codeSchema },
-    });
+    } satisfies Parameters<typeof invokeLLM>[0];
+    const streamAttempt = streamLLMText(request, onToken);
     const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Model generation exceeded the 45-second interactive budget")), 45_000));
-    const response = await Promise.race([modelResponse, timeout]);
+    const streamed = await Promise.race([streamAttempt, timeout]);
+    if (streamed?.content) {
+      const parsed = JSON.parse(streamed.content) as GeneratedProject;
+      return { project: { ...parsed, files: normalizeGeneratedFiles(parsed.files) }, usage: streamed.usage };
+    }
+    const response = await Promise.race([invokeLLM(request), timeout]);
     const content = response.choices[0]?.message.content;
     if (typeof content !== "string") throw new Error("Model returned no structured application payload");
     const parsed = JSON.parse(content) as GeneratedProject;
@@ -190,26 +205,36 @@ export async function createZip(project: GeneratedProject, sqliteBundle: Buffer)
   return Buffer.from(await archive.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } }));
 }
 
-export async function executeAppGeneration(input: { userId: number; prompt: string; onEvent?: (event: GenerationEvent) => void }) {
-  const appId = nanoid(18);
+export async function executeAppGeneration(input: { userId: number; prompt: string; model?: SelectableModel; appId?: string; onEvent?: (event: GenerationEvent) => void }) {
+  const appId = input.appId || nanoid(18);
   const onEvent = input.onEvent || (() => undefined);
+  const model = input.model && selectableModels.includes(input.model) ? input.model : "gpt-5-mini";
   const startingName = titleFromPrompt(input.prompt);
-  await createGeneratedApp({ id: appId, userId: input.userId, name: startingName, prompt: input.prompt, model: "gpt-5" });
   const startedAt = Date.now();
+  let existingApp: Awaited<ReturnType<typeof getGeneratedAppForUser>> | undefined;
+  let versionNumber = 1;
   try {
+    const reservation = await reserveTenantGeneration(input.userId);
+    if (!reservation.allowed) throw new Error(`Tenant generation quota reached for ${reservation.usage.periodKey}`);
+    existingApp = input.appId ? await getGeneratedAppForUser(input.appId, input.userId) : undefined;
+    if (input.appId && !existingApp) throw new Error("Application not found");
+    if (existingApp) {
+      const versions = await listGeneratedAppVersions(appId);
+      versionNumber = Math.max(0, ...versions.map(version => version.versionNumber)) + 1;
+      await updateGeneratedApp(appId, input.userId, { status: "generating", prompt: input.prompt, model, error: "" });
+    } else {
+      await createGeneratedApp({ id: appId, userId: input.userId, name: startingName, prompt: input.prompt, model });
+    }
     onEvent({ type: "status", message: "Interpreting the application brief", appId });
-    const generated = await generateProject(input.prompt);
+    const generated = await generateProject(input.prompt, model, token => onEvent({ type: "token", text: token, appId }));
     const project = { ...generated.project, files: normalizeGeneratedFiles(generated.project.files) };
     onEvent({ type: "status", message: "Writing application files", appId });
-    for (const file of project.files) {
-      await createGeneratedAppFile({ id: nanoid(18), appId, path: file.path, language: file.language, content: file.content, byteSize: Buffer.byteLength(file.content) });
-      onEvent({ type: "file", path: file.path, language: file.language, content: file.content, appId });
-    }
+    project.files.forEach(file => onEvent({ type: "file", path: file.path, language: file.language, content: file.content, appId }));
 
     onEvent({ type: "status", message: "Packaging isolated SQLite state and export archive", appId });
     const sqliteBundle = await createIsolatedSqliteBundle(project);
     const zipBundle = await createZip(project, sqliteBundle);
-    const root = `generated-apps/${input.userId}/${appId}`;
+    const root = `generated-apps/${input.userId}/${appId}/versions/v${versionNumber}`;
     const manifest = JSON.stringify({ appId, generatedAt: new Date().toISOString(), ...project }, null, 2);
     const [manifestStorage, sqliteStorage, zipStorage] = await Promise.all([
       storagePut(`${root}/source-manifest.json`, manifest, "application/json"),
@@ -221,6 +246,9 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
       createGeneratedAppArtifact({ id: nanoid(18), appId, kind: "sqlite_database", storageKey: sqliteStorage.key, storageUrl: sqliteStorage.url, filename: "app.sqlite", contentType: "application/vnd.sqlite3", byteSize: sqliteBundle.byteLength }),
       createGeneratedAppArtifact({ id: nanoid(18), appId, kind: "zip_export", storageKey: zipStorage.key, storageUrl: zipStorage.url, filename: `${safeName(project.name)}.zip`, contentType: "application/zip", byteSize: zipBundle.byteLength }),
     ]);
+    const versionFiles = project.files.map(file => ({ id: nanoid(18), path: file.path, language: file.language, content: file.content, byteSize: Buffer.byteLength(file.content) }));
+    if (existingApp) await replaceGeneratedAppFiles(appId, versionFiles);
+    else await Promise.all(versionFiles.map(file => createGeneratedAppFile({ ...file, appId })));
     await updateGeneratedApp(appId, input.userId, {
       name: project.name.slice(0, 160),
       status: "ready",
@@ -234,15 +262,20 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
       sqliteArtifactKey: sqliteStorage.key,
       exportArtifactKey: zipStorage.key,
       latencyMs: Date.now() - startedAt,
-      inputTokens: generated.usage?.prompt_tokens,
-      outputTokens: generated.usage?.completion_tokens,
+      inputTokens: generated.usage?.prompt_tokens || 0,
+      outputTokens: generated.usage?.completion_tokens || 0,
     });
+    const artifactBytes = Buffer.byteLength(manifest) + sqliteBundle.byteLength + zipBundle.byteLength;
+    await Promise.all([
+      createGeneratedAppVersion({ id: nanoid(18), appId, versionNumber, label: existingApp ? `Revision ${versionNumber}` : "Initial assembly", sourceManifestKey: manifestStorage.key, sqliteArtifactKey: sqliteStorage.key, exportArtifactKey: zipStorage.key, schemaSummary: JSON.stringify(project.schema), routes: JSON.stringify(project.routes), componentTree: JSON.stringify(project.components), metadata: JSON.stringify({ name: project.name, summary: project.summary, prompt: input.prompt, model, previewConfig: { title: project.name, description: project.summary, prompt: input.prompt } }), fileSnapshot: JSON.stringify(project.files) }),
+      recordTenantGenerationUsage({ userId: input.userId, inputTokens: generated.usage?.prompt_tokens || 0, outputTokens: generated.usage?.completion_tokens || 0, latencyMs: Date.now() - startedAt, artifactBytes }),
+    ]);
     onEvent({ type: "artifact", kind: "zip_export", url: zipStorage.url, appId });
     onEvent({ type: "complete", appId });
     return await getGeneratedAppForUser(appId, input.userId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Generation failed";
-    await updateGeneratedApp(appId, input.userId, { status: "failed", error: message, latencyMs: Date.now() - startedAt });
+    await updateGeneratedApp(appId, input.userId, { status: existingApp ? "ready" : "failed", error: message, latencyMs: Date.now() - startedAt });
     onEvent({ type: "error", message, appId });
     throw error;
   }

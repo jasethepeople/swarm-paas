@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { sdk } from "./_core/sdk";
 import { executeAppGeneration, type GenerationEvent } from "./appBuilder";
+import { selectableModels, type SelectableModel } from "./appBuilder";
 import { consumeRateLimit } from "./rateLimit";
 
 function writeEvent(res: Parameters<Express["post"]>[1] extends never ? never : any, event: GenerationEvent) {
@@ -15,6 +16,8 @@ export function registerGenerationRoutes(app: Express) {
       return;
     }
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";
+    const appId = typeof req.body?.appId === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(req.body.appId) ? req.body.appId : undefined;
+    const requestedModel = typeof req.body?.model === "string" && selectableModels.includes(req.body.model as SelectableModel) ? req.body.model as SelectableModel : "gpt-5-mini";
     if (prompt.length < 10 || prompt.length > 8_000) {
       res.status(400).json({ error: "Provide an application brief between 10 and 8,000 characters." });
       return;
@@ -33,7 +36,7 @@ export function registerGenerationRoutes(app: Express) {
     });
     res.flushHeaders();
     try {
-      await executeAppGeneration({ userId: user.id, prompt, onEvent: event => writeEvent(res, event) });
+      await executeAppGeneration({ userId: user.id, prompt, model: requestedModel, appId, onEvent: event => writeEvent(res, event) });
     } catch {
       // The event stream already contains a user-safe error payload.
     } finally {

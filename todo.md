@@ -30,3 +30,25 @@
 - [x] Expand generation validation coverage for malformed output, duplicate files, prompt rejection, and failure events.
 - [x] Bound live model-generation latency and recover with an artifact-producing fallback when the upstream model is slow.
 - [x] Verify critical browser flows, review project tracking, and create a release checkpoint.
+- [x] Add selectable model controls and a true upstream event-stream adapter with safe fallback behavior.
+- [x] Enforce configurable tenant generation quotas and capture per-app model, token, latency, and artifact usage.
+- [x] Add durable app-version snapshots with file-level diffs, version comparison, and owner-authorized rollback.
+- [x] Build an analytics dashboard for tenant usage, quota consumption, model performance, and generation activity.
+- [x] Build a version explorer with snapshot selection, code diffs, and rollback actions.
+- [x] Add unit and browser coverage for quotas, streaming events, versions, diffs, rollback, and analytics.
+- [x] Add a persisted recent-generation activity feed to tenant analytics and verify it in the workspace.
+- [x] Render before-and-after code content for the selected version diff, not only file change labels.
+- [x] Expand automated coverage for quota enforcement, stream token events, analytics, version backfill, diff procedures, rollback, and live workspace controls.
+- [x] Add an owner-authorized in-place revision flow that generates a new snapshot for the active app and enables meaningful code diffs.
+- [x] Refresh tenant usage analytics after completed generation and revision streams.
+- [x] Preserve and restore app display metadata alongside source files during version rollback.
+- [x] Add procedure-level coverage for analytics, version backfill, rollback behavior, and quota enforcement through app routes.
+- [x] Re-run the live browser revision, diff, and rollback workflow after metadata snapshot support and verify restored display metadata.
+- [x] Refresh the registry record before rehydrating the workspace after a rollback.
+- [x] Add an HTTP generation-route test for quota exhaustion before app creation.
+- [x] Re-run and record the full post-fix browser flow: revision, before-and-after diff, rollback, and metadata restoration.
+- [x] Rehydrate the prompt editor from the restored registry record after rollback.
+- [x] Recover the original prompt from legacy snapshot manifests when pre-metadata versions are restored.
+- [x] Verify the extension workflows and create a release checkpoint.
+- [x] Restart the development service and verify no stale module export errors remain.
+- [x] Save the post-extension release checkpoint and perform a final smoke verification.

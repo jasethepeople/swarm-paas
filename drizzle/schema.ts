@@ -89,6 +89,42 @@ export const rateLimitWindows = mysqlTable("rate_limit_windows", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const tenantQuotas = mysqlTable("tenant_quotas", {
+  userId: int("userId").primaryKey(),
+  monthlyGenerationLimit: int("monthlyGenerationLimit").notNull().default(12),
+  monthlyTokenLimit: int("monthlyTokenLimit").notNull().default(200000),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const tenantUsage = mysqlTable("tenant_usage", {
+  id: varchar("id", { length: 40 }).primaryKey(),
+  userId: int("userId").notNull(),
+  periodKey: varchar("periodKey", { length: 7 }).notNull(),
+  generationCount: int("generationCount").notNull().default(0),
+  inputTokens: int("inputTokens").notNull().default(0),
+  outputTokens: int("outputTokens").notNull().default(0),
+  latencyTotalMs: int("latencyTotalMs").notNull().default(0),
+  artifactBytes: int("artifactBytes").notNull().default(0),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("tenant_usage_user_period_idx").on(table.userId, table.periodKey)]);
+
+export const generatedAppVersions = mysqlTable("generated_app_versions", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  appId: varchar("appId", { length: 32 }).notNull(),
+  versionNumber: int("versionNumber").notNull(),
+  label: varchar("label", { length: 160 }).notNull(),
+  sourceManifestKey: varchar("sourceManifestKey", { length: 512 }),
+  sqliteArtifactKey: varchar("sqliteArtifactKey", { length: 512 }),
+  exportArtifactKey: varchar("exportArtifactKey", { length: 512 }),
+  schemaSummary: longtext("schemaSummary"),
+  routes: longtext("routes"),
+  componentTree: longtext("componentTree"),
+  metadata: longtext("metadata"),
+  fileSnapshot: longtext("fileSnapshot").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("generated_app_versions_app_idx").on(table.appId, table.versionNumber)]);
+
 export type GeneratedApp = typeof generatedApps.$inferSelect;
 export type GeneratedAppFile = typeof generatedAppFiles.$inferSelect;
 export type GeneratedAppArtifact = typeof generatedAppArtifacts.$inferSelect;
+export type GeneratedAppVersion = typeof generatedAppVersions.$inferSelect;
