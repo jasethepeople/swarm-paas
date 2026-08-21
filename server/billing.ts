@@ -12,6 +12,7 @@ function stripeClient() {
 export async function createBillingCheckout(input: { organizationId: string; userId: number; email?: string | null; name?: string | null; origin: string }) {
   const priceId = configuredPriceId();
   if (!priceId) throw new Error("Set VELLUM_STRIPE_PRICE_ID after creating a recurring price in Stripe to enable checkout.");
+  if (!process.env.STRIPE_WEBHOOK_SECRET) throw new Error("Stripe webhook signing must be configured before enabling checkout.");
   const stripe = stripeClient();
   const current = await getOrganizationBillingAccount(input.organizationId);
   let customerId = current?.stripeCustomerId || undefined;

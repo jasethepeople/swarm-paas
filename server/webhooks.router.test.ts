@@ -24,4 +24,9 @@ describe("webhook readiness context", () => {
     expect(result.endpoints[0]).not.toHaveProperty("secretCiphertext");
     expect(result.deliveries[0]).toMatchObject({ eventType: "webhook.test", status: "delivered", attempts: 1, responseStatus: 200 });
   });
+
+  it("rejects endpoint re-verification for a non-manager membership", async () => {
+    mocks.getOrganizationMembership.mockResolvedValueOnce({ id: "member-2", organizationId: "org-1", userId: 1, role: "viewer" });
+    await expect(appRouter.createCaller(context()).webhooks.testDelivery({ endpointId: "endpoint-1" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

@@ -24,7 +24,7 @@ describe("billing API", () => {
     expect(overview.usage.usage.generations).toBe(2);
     expect(overview.account?.stripeCustomerId).toBe("cus_1");
     expect(overview.canManage).toBe(true);
-    expect(overview.activation).toEqual(expect.objectContaining({ recurringPriceConfigured: false, customerLinked: true }));
+    expect(overview.activation).toEqual(expect.objectContaining({ recurringPriceConfigured: false, customerLinked: true, canInitiateCheckout: expect.any(Boolean) }));
   });
 
   it("delegates checkout and portal creation with the authenticated workspace context", async () => {

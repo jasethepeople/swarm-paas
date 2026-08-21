@@ -13,4 +13,12 @@ describe("billing checkout configuration", () => {
     delete process.env.VELLUM_STRIPE_PRICE_ID;
     await expect(createBillingCheckout({ organizationId: "org-1", userId: 1, email: "owner@example.com", name: "Owner", origin: "https://vellum.test" })).rejects.toThrow("VELLUM_STRIPE_PRICE_ID");
   });
+
+  it("refuses Checkout when webhook signing is unavailable even if a recurring price exists", async () => {
+    const originalWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    process.env.VELLUM_STRIPE_PRICE_ID = "price_vellum";
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+    await expect(createBillingCheckout({ organizationId: "org-1", userId: 1, email: "owner@example.com", name: "Owner", origin: "https://vellum.test" })).rejects.toThrow("webhook signing");
+    if (originalWebhookSecret) process.env.STRIPE_WEBHOOK_SECRET = originalWebhookSecret;
+  });
 });

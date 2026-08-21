@@ -2,6 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { CollaborationBillingPanel, CollaborationInvitationAcceptance } from "@/components/CollaborationBillingPanel";
 import { OperationalReadinessPanel } from "@/components/OperationalReadinessPanel";
 import { ReliabilityHandoffPanel } from "@/components/ReliabilityHandoffPanel";
+import { OperationalSafeguardsPanel } from "@/components/OperationalSafeguardsPanel";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { Highlight, themes } from "prism-react-renderer";
@@ -212,6 +213,7 @@ function Studio() {
       <CollaborationBillingPanel appId={selectedAppId} canManageApp={activeApp?.collaborationAccess === "manager"} />
       <OperationalReadinessPanel />
       <ReliabilityHandoffPanel appId={selectedAppId} />
+      <OperationalSafeguardsPanel appId={selectedAppId} />
     </main></div></div>;
 }
 

@@ -298,7 +298,10 @@ export const appRouter = router({
       const membership = await getOrganizationMembership(organization.id, ctx.user.id);
       if (!membership) throw new TRPCError({ code: "FORBIDDEN", message: "Organization membership is required" });
       const [usage, account] = await Promise.all([getTenantAnalytics(organization.ownerId), getOrganizationBillingAccount(organization.id)]);
-      return { usage, account, canManage: canManageOrganization(membership.role), checkoutConfigured: Boolean(process.env.VELLUM_STRIPE_PRICE_ID), activation: { secretKeyConfigured: Boolean(process.env.STRIPE_SECRET_KEY), webhookSecretConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET), recurringPriceConfigured: Boolean(process.env.VELLUM_STRIPE_PRICE_ID), customerLinked: Boolean(account?.stripeCustomerId) } };
+      const secretKeyConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
+      const webhookSecretConfigured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+      const recurringPriceConfigured = Boolean(process.env.VELLUM_STRIPE_PRICE_ID);
+      return { usage, account, canManage: canManageOrganization(membership.role), checkoutConfigured: recurringPriceConfigured, activation: { secretKeyConfigured, webhookSecretConfigured, recurringPriceConfigured, customerLinked: Boolean(account?.stripeCustomerId), canInitiateCheckout: secretKeyConfigured && webhookSecretConfigured && recurringPriceConfigured } };
     }),
     checkout: protectedProcedure.mutation(async ({ ctx }) => {
       const { organization } = await requireOrganizationManager(ctx.user.id);

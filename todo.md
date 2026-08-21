@@ -94,3 +94,10 @@
 - [x] Add targeted coverage and visual verification for reliability indicators and handoff controls.
 - [x] Add automated coverage for pending, accepted, and expired collaboration invitation status records.
 - [x] Verify the reliability extension workflows and save a release checkpoint.
+- [x] Add owner-authorized re-verification controls for unverified or degraded webhook endpoints.
+- [x] Add collaborator access-review cues with viewer/editor/manager counts.
+- [x] Add an explicit billing activation gate that requires all non-sensitive readiness prerequisites.
+- [x] Add targeted tests and visual verification for safeguard controls.
+- [x] Enforce the full non-sensitive billing activation gate in the Checkout UI and server procedure.
+- [x] Add targeted authorization and access-review count coverage for safeguard controls.
+- [x] Verify the safeguard extension workflows and save a release checkpoint.
