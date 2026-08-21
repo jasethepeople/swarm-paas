@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({
-  createBuilderApiKey: vi.fn(), deleteGeneratedApp: vi.fn(), getGeneratedAppFile: vi.fn(), getGeneratedAppForUser: vi.fn(), listGeneratedAppArtifacts: vi.fn(), listGeneratedAppFiles: vi.fn(), listGeneratedApps: vi.fn(), listGeneratedAppVersions: vi.fn(), getGeneratedAppVersion: vi.fn(), createGeneratedAppVersion: vi.fn(), replaceGeneratedAppFiles: vi.fn(), updateGeneratedApp: vi.fn(), getTenantAnalytics: vi.fn(), getTenantQuota: vi.fn(), updateTenantQuota: vi.fn(),
+  createBuilderApiKey: vi.fn(), deleteGeneratedApp: vi.fn(), getGeneratedAppFile: vi.fn(), getGeneratedAppForUser: vi.fn(), getGeneratedAppWithAccess: vi.fn(), listAccessibleGeneratedApps: vi.fn(), listGeneratedAppArtifacts: vi.fn(), listGeneratedAppFiles: vi.fn(), listGeneratedApps: vi.fn(), listGeneratedAppVersions: vi.fn(), getGeneratedAppVersion: vi.fn(), createGeneratedAppVersion: vi.fn(), replaceGeneratedAppFiles: vi.fn(), updateGeneratedApp: vi.fn(), getTenantAnalytics: vi.fn(), getTenantQuota: vi.fn(), updateTenantQuota: vi.fn(),
 }));
 
 vi.mock("./rateLimit", () => ({ consumeRegistryRateLimit: vi.fn().mockResolvedValue({ allowed: true, remaining: 100, resetsAt: Date.now() + 60_000 }) }));
@@ -31,6 +31,7 @@ describe("tenant-control router procedures", () => {
   it("backfills a baseline, exposes a file diff, and restores version metadata for the owner", async () => {
     const version = { id: "version-1", appId: app.id, versionNumber: 1, label: "Initial", fileSnapshot: JSON.stringify([{ path: "client/App.tsx", language: "tsx", content: "old" }]), metadata: JSON.stringify({ name: "Baseline", summary: "baseline", prompt: "baseline prompt", model: "gpt-5-mini", previewConfig: { title: "Baseline" } }), schemaSummary: "[]", routes: "[]", componentTree: "[]", sourceManifestKey: "manifest", sqliteArtifactKey: "db", exportArtifactKey: "zip" };
     db.getGeneratedAppForUser.mockResolvedValue(app);
+    db.getGeneratedAppWithAccess.mockResolvedValue({ app, access: "manager", isOwner: true });
     db.listGeneratedAppFiles.mockResolvedValue([{ path: "client/App.tsx", language: "tsx", content: "current" }]);
     db.listGeneratedAppVersions.mockResolvedValueOnce([]).mockResolvedValueOnce([version]).mockResolvedValue([version]);
     db.getGeneratedAppVersion.mockResolvedValue(version);

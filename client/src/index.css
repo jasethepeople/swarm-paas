@@ -95,5 +95,6 @@
   .liquid-hover { transition: transform 160ms cubic-bezier(.23,1,.32,1), background-color 160ms cubic-bezier(.23,1,.32,1), border-color 160ms cubic-bezier(.23,1,.32,1); }
   .liquid-hover:hover { transform: translateY(-2px); }
   .liquid-hover:active { transform: scale(.975); }
+  /* The historical routing/organization block is retained for source compatibility; the updated sibling renders the active controls. */
+  main.min-w-0.flex-1 > div:nth-of-type(4) { display: none; }
 }
-

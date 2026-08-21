@@ -69,3 +69,13 @@
 - [x] Gate organization management UI in JSX using `canManageOrganization` so non-owner/admin users see view-only member rows and explicit permission messaging without relying on DOM mutation.
 - [x] Add route/integration test coverage for `organization.removeMember` and assert `member.removed` audit-log creation.
 - [x] Verify the extension workflows and save a release checkpoint.
+- [x] Add signed, retry-aware operational webhooks for generation completion and organization invitation events.
+- [x] Implement workspace-scoped app collaborators with view, edit, and manage access levels.
+- [x] Add a metered usage and billing dashboard with payment-integration setup and customer checkout access.
+- [x] Add database, route, and interface coverage for webhook delivery, collaboration authorization, and billing states.
+- [x] Register explicit client routes for organization and collaboration invitation acceptance.
+- [x] Surface the required Stripe recurring-price setup directly in the billing experience and validate checkout preconditions.
+- [x] Add billing and Stripe-webhook automated coverage, plus webhook delivery persistence coverage.
+- [x] Keep Stripe checkout disabled with clear in-product setup guidance until a VELLUM_STRIPE_PRICE_ID is supplied later.
+- [x] Add Stripe webhook tests for signed test verification, invalid-signature rejection, and persisted subscription identifiers.
+- [x] Verify the collaboration and billing extension workflows and save a release checkpoint.

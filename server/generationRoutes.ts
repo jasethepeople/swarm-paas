@@ -3,6 +3,7 @@ import { sdk } from "./_core/sdk";
 import { executeAppGeneration, type GenerationEvent } from "./appBuilder";
 import { selectableModels, type SelectableModel } from "./appBuilder";
 import { consumeRateLimit } from "./rateLimit";
+import { getGeneratedAppWithAccess } from "./db";
 
 function writeEvent(res: Parameters<Express["post"]>[1] extends never ? never : any, event: GenerationEvent) {
   res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
@@ -21,6 +22,17 @@ export function registerGenerationRoutes(app: Express) {
     if (prompt.length < 10 || prompt.length > 8_000) {
       res.status(400).json({ error: "Provide an application brief between 10 and 8,000 characters." });
       return;
+    }
+    if (appId) {
+      const access = await getGeneratedAppWithAccess(appId, user.id);
+      if (!access) {
+        res.status(404).json({ error: "Application not found" });
+        return;
+      }
+      if (access.access === "viewer") {
+        res.status(403).json({ error: "Editor or manager access is required to revise this application" });
+        return;
+      }
     }
     const limit = consumeRateLimit(`generation:${user.id}`, 6, 60_000);
     if (!limit.allowed) {

@@ -35,8 +35,22 @@ import {
   listOrganizationInvitations,
   getActiveOrganizationInvitation,
   acceptOrganizationInvitation,
+  acceptAppCollaborationInvitation,
+  createAppCollaborationInvitation,
   getTenantAnalytics,
   getTenantQuota,
+  getGeneratedAppWithAccess,
+  getActiveAppCollaborationInvitation,
+  listAccessibleGeneratedApps,
+  listAppCollaborationInvitations,
+  listAppCollaborators,
+  createOrUpdateAppCollaborator,
+  removeAppCollaborator,
+  createWebhookEndpoint,
+  deleteWebhookEndpoint,
+  getOrganizationBillingAccount,
+  listWebhookDeliveries,
+  listWebhookEndpoints,
   updateTenantQuota,
 } from "./db";
 import { consumeRegistryRateLimit } from "./rateLimit";
@@ -45,6 +59,8 @@ import { selectableModels } from "./appBuilder";
 import { diffFileSnapshots } from "./versioning";
 import { routingModels } from "./modelRouting";
 import { canManageOrganization, canModifyMember, invitationMatchesUser } from "./governance";
+import { createBillingCheckout, createBillingPortal } from "./billing";
+import { dispatchOperationalWebhook, encryptWebhookSecret, isSafeWebhookUrl, webhookEventTypes } from "./webhooks";
 
 const registryProcedure = protectedProcedure.use(({ ctx, next }) => {
   return consumeRegistryRateLimit(ctx.user.id).then(rate => {
@@ -64,6 +80,15 @@ async function requireOrganizationManager(userId: number) {
   return { organization, membership };
 }
 
+const appAccessRank = { viewer: 1, editor: 2, manager: 3 } as const;
+
+async function requireAppAccess(userId: number, appId: string, minimum: keyof typeof appAccessRank) {
+  const resolved = await getGeneratedAppWithAccess(appId, userId);
+  if (!resolved) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+  if (appAccessRank[resolved.access] < appAccessRank[minimum]) throw new TRPCError({ code: "FORBIDDEN", message: `${minimum} app access is required` });
+  return resolved;
+}
+
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
@@ -78,7 +103,7 @@ export const appRouter = router({
     }),
   }),
   apps: router({
-    list: registryProcedure.query(({ ctx }) => listGeneratedApps(ctx.user.id)),
+    list: registryProcedure.query(({ ctx }) => listAccessibleGeneratedApps(ctx.user.id)),
     get: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
       const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
       if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
@@ -111,9 +136,8 @@ export const appRouter = router({
       return (await response.json()) as unknown;
     }),
     delete: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
-      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
-      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
-      await deleteGeneratedApp(app.id, ctx.user.id);
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
+      await deleteGeneratedApp(app.id, app.userId);
       return { success: true };
     }),
     versions: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
@@ -139,8 +163,7 @@ export const appRouter = router({
       return diffFileSnapshots(fromFiles, toFiles);
     }),
     rollback: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), versionId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
-      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
-      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
       const target = await getGeneratedAppVersion(app.id, input.versionId);
       if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Version not found" });
       const currentFiles = await listGeneratedAppFiles(app.id);
@@ -159,7 +182,7 @@ export const appRouter = router({
         } catch { /* Legacy snapshots still restore their source files if manifest metadata is unavailable. */ }
       }
       await replaceGeneratedAppFiles(app.id, files.map(file => ({ id: nanoid(18), path: file.path, language: file.language, content: file.content, byteSize: Buffer.byteLength(file.content) })));
-      await updateGeneratedApp(app.id, ctx.user.id, { name: metadata?.name || app.name, summary: metadata?.summary || app.summary || "", prompt: metadata?.prompt || app.prompt, model: metadata?.model || app.model || "gpt-5-mini", previewConfig: metadata?.previewConfig ? JSON.stringify(metadata.previewConfig) : app.previewConfig || "", schemaSummary: target.schemaSummary || "[]", routes: target.routes || "[]", componentTree: target.componentTree || "[]", sourceManifestKey: target.sourceManifestKey || "", sqliteArtifactKey: target.sqliteArtifactKey || "", exportArtifactKey: target.exportArtifactKey || "", sourceBundleKey: target.sourceManifestKey || "", status: "ready" });
+      await updateGeneratedApp(app.id, app.userId, { name: metadata?.name || app.name, summary: metadata?.summary || app.summary || "", prompt: metadata?.prompt || app.prompt, model: metadata?.model || app.model || "gpt-5-mini", previewConfig: metadata?.previewConfig ? JSON.stringify(metadata.previewConfig) : app.previewConfig || "", schemaSummary: target.schemaSummary || "[]", routes: target.routes || "[]", componentTree: target.componentTree || "[]", sourceManifestKey: target.sourceManifestKey || "", sqliteArtifactKey: target.sqliteArtifactKey || "", exportArtifactKey: target.exportArtifactKey || "", sourceBundleKey: target.sourceManifestKey || "", status: "ready" });
       return { success: true, restoredVersion: target.versionNumber };
     }),
     shares: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
@@ -168,8 +191,7 @@ export const appRouter = router({
       return listAppShareLinks(app.id);
     }),
     createShare: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), versionId: z.string().min(1).max(32), expiresInHours: z.number().int().min(1).max(720).default(72) })).mutation(async ({ ctx, input }) => {
-      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
-      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
       if (!await getGeneratedAppVersion(app.id, input.versionId)) throw new TRPCError({ code: "NOT_FOUND", message: "Version not found" });
       const rawToken = randomBytes(24).toString("base64url");
       const expiresAt = new Date(Date.now() + input.expiresInHours * 60 * 60 * 1000);
@@ -179,11 +201,54 @@ export const appRouter = router({
       return { id, path: `/share/${rawToken}`, expiresAt };
     }),
     revokeShare: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), shareId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
-      const app = await getGeneratedAppForUser(input.appId, ctx.user.id);
-      if (!app) throw new TRPCError({ code: "NOT_FOUND", message: "Application not found" });
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
       await revokeAppShareLink(input.shareId, app.id);
       const organization = await getOrCreateOrganization(ctx.user.id);
       await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "preview.share_revoked", targetType: "app_share_link", targetId: input.shareId, metadata: JSON.stringify({ appId: app.id }) });
+      return { success: true };
+    }),
+    collaboration: registryProcedure.input(z.object({ appId: z.string().min(1).max(32) })).query(async ({ ctx, input }) => {
+      await requireAppAccess(ctx.user.id, input.appId, "viewer");
+      const [collaborators, invitations] = await Promise.all([listAppCollaborators(input.appId), listAppCollaborationInvitations(input.appId)]);
+      return { collaborators, invitations };
+    }),
+    inviteCollaborator: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), email: z.string().email().max(320), access: z.enum(["viewer", "editor", "manager"]), expiresInHours: z.number().int().min(1).max(720).default(168) })).mutation(async ({ ctx, input }) => {
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
+      const token = randomBytes(24).toString("base64url");
+      const expiresAt = new Date(Date.now() + input.expiresInHours * 60 * 60 * 1000);
+      const id = await createAppCollaborationInvitation({ appId: app.id, email: input.email, access: input.access, tokenHash: createHash("sha256").update(token).digest("hex"), invitedByUserId: ctx.user.id, expiresAt });
+      const organization = await getOrCreateOrganization(app.userId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_invited", targetType: "app_collaboration_invitation", targetId: id, metadata: JSON.stringify({ appId: app.id, email: input.email, access: input.access, expiresAt }) });
+      await dispatchOperationalWebhook(organization.id, "collaboration.invitation.created", { appId: app.id, invitationId: id, email: input.email, access: input.access, expiresAt: expiresAt.toISOString() });
+      return { id, path: `/collaborate/${token}`, expiresAt };
+    }),
+    acceptCollaborationInvitation: protectedProcedure.input(z.object({ token: z.string().min(20).max(160) })).mutation(async ({ ctx, input }) => {
+      const invitation = await getActiveAppCollaborationInvitation(createHash("sha256").update(input.token).digest("hex"));
+      if (!invitation) throw new TRPCError({ code: "NOT_FOUND", message: "Collaboration invitation is invalid or expired" });
+      if (!invitationMatchesUser(invitation.email, ctx.user.email)) throw new TRPCError({ code: "FORBIDDEN", message: "This collaboration invitation was issued to a different email address" });
+      await createOrUpdateAppCollaborator({ appId: invitation.appId, userId: ctx.user.id, access: invitation.access, addedByUserId: invitation.invitedByUserId });
+      await acceptAppCollaborationInvitation(invitation.id);
+      const app = await getGeneratedAppWithAccess(invitation.appId, ctx.user.id);
+      if (app) {
+        const organization = await getOrCreateOrganization(app.app.userId);
+        await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_joined", targetType: "app_collaborator", targetId: String(ctx.user.id), metadata: JSON.stringify({ appId: invitation.appId, access: invitation.access }) });
+      }
+      return { success: true, appId: invitation.appId };
+    }),
+    updateCollaborator: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), userId: z.number().int().positive(), access: z.enum(["viewer", "editor", "manager"]) })).mutation(async ({ ctx, input }) => {
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
+      if (input.userId === app.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "The application owner always retains manager access" });
+      await createOrUpdateAppCollaborator({ appId: app.id, userId: input.userId, access: input.access, addedByUserId: ctx.user.id });
+      const organization = await getOrCreateOrganization(app.userId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_access_updated", targetType: "app_collaborator", targetId: String(input.userId), metadata: JSON.stringify({ appId: app.id, access: input.access }) });
+      return { success: true };
+    }),
+    removeCollaborator: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), userId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
+      if (input.userId === app.userId) throw new TRPCError({ code: "BAD_REQUEST", message: "The application owner cannot be removed" });
+      await removeAppCollaborator(app.id, input.userId);
+      const organization = await getOrCreateOrganization(app.userId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_removed", targetType: "app_collaborator", targetId: String(input.userId), metadata: JSON.stringify({ appId: app.id }) });
       return { success: true };
     }),
   }),
@@ -195,6 +260,55 @@ export const appRouter = router({
   routing: router({
     policies: protectedProcedure.query(({ ctx }) => getModelRoutingPolicies(ctx.user.id)),
     updatePolicies: protectedProcedure.input(z.object({ policies: z.array(z.object({ model: z.enum(routingModels), inputMicrosPer1k: z.number().int().min(1).max(100_000), outputMicrosPer1k: z.number().int().min(1).max(100_000), enabled: z.boolean(), priority: z.number().int().min(1).max(999) })).min(1).max(routingModels.length) })).mutation(({ ctx, input }) => updateModelRoutingPolicies(ctx.user.id, input.policies)),
+  }),
+  webhooks: router({
+    context: protectedProcedure.query(async ({ ctx }) => {
+      const organization = await getOrCreateOrganization(ctx.user.id);
+      const membership = await getOrganizationMembership(organization.id, ctx.user.id);
+      if (!membership) throw new TRPCError({ code: "FORBIDDEN", message: "Organization membership is required" });
+      const [endpoints, deliveries] = await Promise.all([listWebhookEndpoints(organization.id), listWebhookDeliveries(organization.id)]);
+      return { endpoints: endpoints.map(({ secretCiphertext, ...endpoint }) => endpoint), deliveries, canManage: canManageOrganization(membership.role) };
+    }),
+    create: protectedProcedure.input(z.object({ url: z.string().url().max(512).refine(isSafeWebhookUrl, "Webhook URL must be a public HTTPS endpoint"), events: z.array(z.enum(webhookEventTypes)).min(1).max(webhookEventTypes.length) })).mutation(async ({ ctx, input }) => {
+      const { organization } = await requireOrganizationManager(ctx.user.id);
+      const secret = `whsec_${randomBytes(24).toString("base64url")}`;
+      const id = await createWebhookEndpoint({ organizationId: organization.id, url: input.url, events: JSON.stringify(input.events), secretCiphertext: encryptWebhookSecret(secret), createdByUserId: ctx.user.id });
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "webhook.created", targetType: "webhook_endpoint", targetId: id, metadata: JSON.stringify({ url: input.url, events: input.events }) });
+      return { id, secret };
+    }),
+    remove: protectedProcedure.input(z.object({ endpointId: z.string().min(1).max(32) })).mutation(async ({ ctx, input }) => {
+      const { organization } = await requireOrganizationManager(ctx.user.id);
+      await deleteWebhookEndpoint(organization.id, input.endpointId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "webhook.removed", targetType: "webhook_endpoint", targetId: input.endpointId });
+      return { success: true };
+    }),
+  }),
+  billing: router({
+    overview: protectedProcedure.query(async ({ ctx }) => {
+      const organization = await getOrCreateOrganization(ctx.user.id);
+      const membership = await getOrganizationMembership(organization.id, ctx.user.id);
+      if (!membership) throw new TRPCError({ code: "FORBIDDEN", message: "Organization membership is required" });
+      const [usage, account] = await Promise.all([getTenantAnalytics(organization.ownerId), getOrganizationBillingAccount(organization.id)]);
+      return { usage, account, canManage: canManageOrganization(membership.role), checkoutConfigured: Boolean(process.env.VELLUM_STRIPE_PRICE_ID) };
+    }),
+    checkout: protectedProcedure.mutation(async ({ ctx }) => {
+      const { organization } = await requireOrganizationManager(ctx.user.id);
+      const origin = ctx.req.headers.origin || `${ctx.req.protocol || "https"}://${ctx.req.get?.("host") || "localhost"}`;
+      try {
+        return await createBillingCheckout({ organizationId: organization.id, userId: ctx.user.id, email: ctx.user.email, name: ctx.user.name, origin });
+      } catch (error) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: error instanceof Error ? error.message : "Billing checkout could not be created" });
+      }
+    }),
+    portal: protectedProcedure.mutation(async ({ ctx }) => {
+      const { organization } = await requireOrganizationManager(ctx.user.id);
+      const origin = ctx.req.headers.origin || `${ctx.req.protocol || "https"}://${ctx.req.get?.("host") || "localhost"}`;
+      try {
+        return await createBillingPortal({ organizationId: organization.id, origin });
+      } catch (error) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: error instanceof Error ? error.message : "Billing portal could not be opened" });
+      }
+    }),
   }),
   organization: router({
     context: protectedProcedure.query(async ({ ctx }) => {
@@ -208,6 +322,7 @@ export const appRouter = router({
       const expiresAt = new Date(Date.now() + input.expiresInHours * 60 * 60 * 1000);
       const id = await createOrganizationInvitation({ organizationId: organization.id, email: input.email, role: input.role, tokenHash: createHash("sha256").update(rawToken).digest("hex"), invitedByUserId: ctx.user.id, expiresAt });
       await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "member.invited", targetType: "organization_invitation", targetId: id, metadata: JSON.stringify({ email: input.email, role: input.role, expiresAt }) });
+      await dispatchOperationalWebhook(organization.id, "organization.invitation.created", { invitationId: id, email: input.email, role: input.role, expiresAt: expiresAt.toISOString() });
       return { id, path: `/invite/${rawToken}`, expiresAt };
     }),
     acceptInvitation: protectedProcedure.input(z.object({ token: z.string().min(20).max(160) })).mutation(async ({ ctx, input }) => {

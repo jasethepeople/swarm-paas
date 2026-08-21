@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./rateLimit", () => ({ consumeRegistryRateLimit: vi.fn().mockResolvedValue({ allowed: true, remaining: 119, resetsAt: Date.now() + 60_000 }) }));
 vi.mock("./db", () => ({
   listGeneratedApps: vi.fn().mockResolvedValue([]),
+  listAccessibleGeneratedApps: vi.fn().mockResolvedValue([]),
   getGeneratedAppForUser: vi.fn().mockResolvedValue(undefined),
+  getGeneratedAppWithAccess: vi.fn().mockResolvedValue(undefined),
   getGeneratedAppFile: vi.fn(),
   listGeneratedAppFiles: vi.fn(),
   listGeneratedAppArtifacts: vi.fn(),

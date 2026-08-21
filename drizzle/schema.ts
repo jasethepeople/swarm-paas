@@ -190,9 +190,66 @@ export const appShareLinks = mysqlTable("app_share_links", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("app_share_links_app_idx").on(table.appId), index("app_share_links_token_idx").on(table.tokenHash)]);
 
+export const appCollaborators = mysqlTable("app_collaborators", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  appId: varchar("appId", { length: 32 }).notNull(),
+  userId: int("userId").notNull(),
+  access: mysqlEnum("access", ["viewer", "editor", "manager"]).notNull().default("viewer"),
+  addedByUserId: int("addedByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("app_collaborators_app_user_idx").on(table.appId, table.userId), index("app_collaborators_user_idx").on(table.userId)]);
+
+export const appCollaborationInvitations = mysqlTable("app_collaboration_invitations", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  appId: varchar("appId", { length: 32 }).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  access: mysqlEnum("access", ["viewer", "editor", "manager"]).notNull().default("viewer"),
+  tokenHash: varchar("tokenHash", { length: 128 }).notNull(),
+  invitedByUserId: int("invitedByUserId").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  acceptedAt: timestamp("acceptedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("app_collaboration_invitations_app_idx").on(table.appId), index("app_collaboration_invitations_token_idx").on(table.tokenHash)]);
+
+export const webhookEndpoints = mysqlTable("webhook_endpoints", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  organizationId: varchar("organizationId", { length: 32 }).notNull(),
+  url: varchar("url", { length: 512 }).notNull(),
+  events: longtext("events").notNull(),
+  secretCiphertext: longtext("secretCiphertext").notNull(),
+  active: int("active").notNull().default(1),
+  createdByUserId: int("createdByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("webhook_endpoints_organization_idx").on(table.organizationId)]);
+
+export const webhookDeliveries = mysqlTable("webhook_deliveries", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  endpointId: varchar("endpointId", { length: 32 }).notNull(),
+  eventId: varchar("eventId", { length: 48 }).notNull(),
+  eventType: varchar("eventType", { length: 96 }).notNull(),
+  status: mysqlEnum("status", ["pending", "delivered", "failed"]).notNull().default("pending"),
+  attempts: int("attempts").notNull().default(0),
+  responseStatus: int("responseStatus"),
+  errorMessage: varchar("errorMessage", { length: 512 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  deliveredAt: timestamp("deliveredAt"),
+}, table => [index("webhook_deliveries_endpoint_created_idx").on(table.endpointId, table.createdAt)]);
+
+export const organizationBillingAccounts = mysqlTable("organization_billing_accounts", {
+  organizationId: varchar("organizationId", { length: 32 }).primaryKey(),
+  stripeCustomerId: varchar("stripeCustomerId", { length: 128 }),
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 128 }),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export type GeneratedApp = typeof generatedApps.$inferSelect;
 export type GeneratedAppFile = typeof generatedAppFiles.$inferSelect;
 export type GeneratedAppArtifact = typeof generatedAppArtifacts.$inferSelect;
 export type GeneratedAppVersion = typeof generatedAppVersions.$inferSelect;
 export type Organization = typeof organizations.$inferSelect;
 export type OrganizationMember = typeof organizationMembers.$inferSelect;
+export type AppCollaborator = typeof appCollaborators.$inferSelect;
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;

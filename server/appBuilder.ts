@@ -8,6 +8,7 @@ import {
   createGeneratedAppFile,
   createGeneratedAppVersion,
   getGeneratedAppForUser,
+  getOrCreateOrganization,
   listGeneratedAppVersions,
   recordTenantGenerationUsage,
   resolveTenantModelRoute,
@@ -17,6 +18,7 @@ import {
 } from "./db";
 import { invokeLLM, streamLLMText } from "./_core/llm";
 import { storagePut } from "./storage";
+import { dispatchOperationalWebhook } from "./webhooks";
 
 export type GeneratedFile = { path: string; language: string; content: string };
 export type AppSchemaTable = { name: string; fields: Array<{ name: string; type: string; required: boolean }> };
@@ -216,16 +218,17 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
   let existingApp: Awaited<ReturnType<typeof getGeneratedAppForUser>> | undefined;
   let versionNumber = 1;
   try {
-    const route = await resolveTenantModelRoute(input.userId, requestedModel, input.prompt);
-    model = route.model as SelectableModel;
-    const reservation = await reserveTenantGeneration(input.userId, route.estimatedCostMicros);
-    if (!reservation.allowed) throw new Error(`Tenant generation quota reached for ${reservation.usage.periodKey}`);
     existingApp = input.appId ? await getGeneratedAppForUser(input.appId, input.userId) : undefined;
     if (input.appId && !existingApp) throw new Error("Application not found");
+    const billingUserId = existingApp?.userId ?? input.userId;
+    const route = await resolveTenantModelRoute(billingUserId, requestedModel, input.prompt);
+    model = route.model as SelectableModel;
+    const reservation = await reserveTenantGeneration(billingUserId, route.estimatedCostMicros);
+    if (!reservation.allowed) throw new Error(`Tenant generation quota reached for ${reservation.usage.periodKey}`);
     if (existingApp) {
       const versions = await listGeneratedAppVersions(appId);
       versionNumber = Math.max(0, ...versions.map(version => version.versionNumber)) + 1;
-      await updateGeneratedApp(appId, input.userId, { status: "generating", prompt: input.prompt, model, error: "" });
+      await updateGeneratedApp(appId, existingApp.userId, { status: "generating", prompt: input.prompt, model, error: "" });
     } else {
       await createGeneratedApp({ id: appId, userId: input.userId, name: startingName, prompt: input.prompt, model });
     }
@@ -239,7 +242,7 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
     onEvent({ type: "status", message: "Packaging isolated SQLite state and export archive", appId });
     const sqliteBundle = await createIsolatedSqliteBundle(project);
     const zipBundle = await createZip(project, sqliteBundle);
-    const root = `generated-apps/${input.userId}/${appId}/versions/v${versionNumber}`;
+    const root = `generated-apps/${billingUserId}/${appId}/versions/v${versionNumber}`;
     const manifest = JSON.stringify({ appId, generatedAt: new Date().toISOString(), ...project }, null, 2);
     const [manifestStorage, sqliteStorage, zipStorage] = await Promise.all([
       storagePut(`${root}/source-manifest.json`, manifest, "application/json"),
@@ -254,7 +257,7 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
     const versionFiles = project.files.map(file => ({ id: nanoid(18), path: file.path, language: file.language, content: file.content, byteSize: Buffer.byteLength(file.content) }));
     if (existingApp) await replaceGeneratedAppFiles(appId, versionFiles);
     else await Promise.all(versionFiles.map(file => createGeneratedAppFile({ ...file, appId })));
-    await updateGeneratedApp(appId, input.userId, {
+    await updateGeneratedApp(appId, billingUserId, {
       name: project.name.slice(0, 160),
       status: "ready",
       summary: project.summary,
@@ -273,11 +276,13 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
     const artifactBytes = Buffer.byteLength(manifest) + sqliteBundle.byteLength + zipBundle.byteLength;
     await Promise.all([
       createGeneratedAppVersion({ id: nanoid(18), appId, versionNumber, label: existingApp ? `Revision ${versionNumber}` : "Initial assembly", sourceManifestKey: manifestStorage.key, sqliteArtifactKey: sqliteStorage.key, exportArtifactKey: zipStorage.key, schemaSummary: JSON.stringify(project.schema), routes: JSON.stringify(project.routes), componentTree: JSON.stringify(project.components), metadata: JSON.stringify({ name: project.name, summary: project.summary, prompt: input.prompt, model, previewConfig: { title: project.name, description: project.summary, prompt: input.prompt } }), fileSnapshot: JSON.stringify(project.files) }),
-      recordTenantGenerationUsage({ userId: input.userId, inputTokens: generated.usage?.prompt_tokens || 0, outputTokens: generated.usage?.completion_tokens || 0, estimatedCostMicros: route.estimatedCostMicros, latencyMs: Date.now() - startedAt, artifactBytes }),
+      recordTenantGenerationUsage({ userId: billingUserId, inputTokens: generated.usage?.prompt_tokens || 0, outputTokens: generated.usage?.completion_tokens || 0, estimatedCostMicros: route.estimatedCostMicros, latencyMs: Date.now() - startedAt, artifactBytes }),
     ]);
+    const organization = await getOrCreateOrganization(billingUserId);
+    await dispatchOperationalWebhook(organization.id, "generation.completed", { appId, versionNumber, model, generatedByUserId: input.userId, ownerUserId: billingUserId, artifactBytes });
     onEvent({ type: "artifact", kind: "zip_export", url: zipStorage.url, appId });
     onEvent({ type: "complete", appId });
-    return await getGeneratedAppForUser(appId, input.userId);
+    return await getGeneratedAppForUser(appId, billingUserId);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Generation failed";
     await updateGeneratedApp(appId, input.userId, { status: existingApp ? "ready" : "failed", error: message, latencyMs: Date.now() - startedAt });

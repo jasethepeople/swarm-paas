@@ -1,7 +1,9 @@
-import { and, desc, eq, max, sql, sum } from "drizzle-orm";
+import { and, desc, eq, inArray, max, sql, sum } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { nanoid } from "nanoid";
 import {
+  appCollaborationInvitations,
+  appCollaborators,
   appShareLinks,
   builderApiKeys,
   generatedAppArtifacts,
@@ -11,6 +13,7 @@ import {
   InsertUser,
   modelRoutingPolicies,
   organizationAuditLogs,
+  organizationBillingAccounts,
   organizationInvitations,
   organizationMembers,
   organizations,
@@ -18,6 +21,8 @@ import {
   tenantQuotas,
   tenantUsage,
   users,
+  webhookDeliveries,
+  webhookEndpoints,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { canReserveTenantGeneration } from "./tenantControls";
@@ -122,10 +127,7 @@ export async function createGeneratedApp(input: {
 }
 
 export async function getGeneratedAppForUser(appId: string, userId: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const rows = await db.select().from(generatedApps).where(and(eq(generatedApps.id, appId), eq(generatedApps.userId, userId))).limit(1);
-  return rows[0];
+  return (await getGeneratedAppWithAccess(appId, userId))?.app;
 }
 
 export async function getGeneratedAppById(appId: string) {
@@ -139,6 +141,29 @@ export async function listGeneratedApps(userId: number) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(generatedApps).where(eq(generatedApps.userId, userId)).orderBy(desc(generatedApps.createdAt));
+}
+
+export type AppAccessLevel = "viewer" | "editor" | "manager";
+
+export async function getGeneratedAppWithAccess(appId: string, userId: number) {
+  const app = await getGeneratedAppById(appId);
+  if (!app) return undefined;
+  if (app.userId === userId) return { app, access: "manager" as const, isOwner: true };
+  const db = await getDb();
+  if (!db) return undefined;
+  const [collaborator] = await db.select().from(appCollaborators).where(and(eq(appCollaborators.appId, appId), eq(appCollaborators.userId, userId))).limit(1);
+  return collaborator ? { app, access: collaborator.access as AppAccessLevel, isOwner: false } : undefined;
+}
+
+export async function listAccessibleGeneratedApps(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const owned = await listGeneratedApps(userId);
+  const collaborations = await db.select().from(appCollaborators).where(eq(appCollaborators.userId, userId));
+  const sharedIds = collaborations.map(collaborator => collaborator.appId).filter(appId => !owned.some(app => app.id === appId));
+  const shared = sharedIds.length ? await db.select().from(generatedApps).where(inArray(generatedApps.id, sharedIds)) : [];
+  const accessByAppId = new Map(collaborations.map(collaborator => [collaborator.appId, collaborator.access as AppAccessLevel]));
+  return [...owned.map(app => ({ ...app, collaborationAccess: "manager" as AppAccessLevel, isOwner: true })), ...shared.map(app => ({ ...app, collaborationAccess: accessByAppId.get(app.id) || ("viewer" as AppAccessLevel), isOwner: false }))].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
 }
 
 export async function updateGeneratedApp(
@@ -496,4 +521,108 @@ export async function getActiveAppShareLink(tokenHash: string) {
   const link = rows[0];
   if (!link || link.revokedAt || link.expiresAt.getTime() <= Date.now()) return undefined;
   return link;
+}
+
+export async function listAppCollaborators(appId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(appCollaborators).where(eq(appCollaborators.appId, appId)).orderBy(desc(appCollaborators.createdAt));
+}
+
+export async function createOrUpdateAppCollaborator(input: { appId: string; userId: number; access: AppAccessLevel; addedByUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const [existing] = await db.select().from(appCollaborators).where(and(eq(appCollaborators.appId, input.appId), eq(appCollaborators.userId, input.userId))).limit(1);
+  if (existing) await db.update(appCollaborators).set({ access: input.access, addedByUserId: input.addedByUserId, updatedAt: new Date() }).where(eq(appCollaborators.id, existing.id));
+  else await db.insert(appCollaborators).values({ id: nanoid(18), ...input });
+}
+
+export async function removeAppCollaborator(appId: string, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.delete(appCollaborators).where(and(eq(appCollaborators.appId, appId), eq(appCollaborators.userId, userId)));
+}
+
+export async function createAppCollaborationInvitation(input: { appId: string; email: string; access: AppAccessLevel; tokenHash: string; invitedByUserId: number; expiresAt: Date }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const id = nanoid(18);
+  await db.insert(appCollaborationInvitations).values({ id, ...input, email: input.email.toLowerCase() });
+  return id;
+}
+
+export async function listAppCollaborationInvitations(appId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(appCollaborationInvitations).where(eq(appCollaborationInvitations.appId, appId)).orderBy(desc(appCollaborationInvitations.createdAt));
+}
+
+export async function getActiveAppCollaborationInvitation(tokenHash: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [invitation] = await db.select().from(appCollaborationInvitations).where(eq(appCollaborationInvitations.tokenHash, tokenHash)).limit(1);
+  if (!invitation || invitation.acceptedAt || invitation.expiresAt.getTime() <= Date.now()) return undefined;
+  return invitation;
+}
+
+export async function acceptAppCollaborationInvitation(id: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.update(appCollaborationInvitations).set({ acceptedAt: new Date() }).where(eq(appCollaborationInvitations.id, id));
+}
+
+export async function createWebhookEndpoint(input: { organizationId: string; url: string; events: string; secretCiphertext: string; createdByUserId: number }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const id = nanoid(18);
+  await db.insert(webhookEndpoints).values({ id, ...input });
+  return id;
+}
+
+export async function listWebhookEndpoints(organizationId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(webhookEndpoints).where(eq(webhookEndpoints.organizationId, organizationId)).orderBy(desc(webhookEndpoints.createdAt));
+}
+
+export async function deleteWebhookEndpoint(organizationId: string, endpointId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.delete(webhookEndpoints).where(and(eq(webhookEndpoints.organizationId, organizationId), eq(webhookEndpoints.id, endpointId)));
+}
+
+export async function createWebhookDelivery(input: { endpointId: string; eventId: string; eventType: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const id = nanoid(18);
+  await db.insert(webhookDeliveries).values({ id, ...input, status: "pending", attempts: 1 });
+  return id;
+}
+
+export async function completeWebhookDelivery(id: string, result: { status: "delivered" | "failed"; attempts: number; responseStatus?: number; errorMessage?: string }) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(webhookDeliveries).set({ status: result.status, attempts: result.attempts, responseStatus: result.responseStatus, errorMessage: result.errorMessage, deliveredAt: result.status === "delivered" ? new Date() : null }).where(eq(webhookDeliveries.id, id));
+}
+
+export async function listWebhookDeliveries(organizationId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const endpoints = await listWebhookEndpoints(organizationId);
+  if (!endpoints.length) return [];
+  return db.select().from(webhookDeliveries).where(inArray(webhookDeliveries.endpointId, endpoints.map(endpoint => endpoint.id))).orderBy(desc(webhookDeliveries.createdAt)).limit(40);
+}
+
+export async function getOrganizationBillingAccount(organizationId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const [account] = await db.select().from(organizationBillingAccounts).where(eq(organizationBillingAccounts.organizationId, organizationId)).limit(1);
+  return account;
+}
+
+export async function upsertOrganizationBillingAccount(input: { organizationId: string; stripeCustomerId?: string; stripeSubscriptionId?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.insert(organizationBillingAccounts).values(input).onDuplicateKeyUpdate({ set: { stripeCustomerId: input.stripeCustomerId, stripeSubscriptionId: input.stripeSubscriptionId, updatedAt: new Date() } });
+  return getOrganizationBillingAccount(input.organizationId);
 }
