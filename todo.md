@@ -52,3 +52,20 @@
 - [x] Verify the extension workflows and create a release checkpoint.
 - [x] Restart the development service and verify no stale module export errors remain.
 - [x] Save the post-extension release checkpoint and perform a final smoke verification.
+- [x] Add configurable per-model cost estimates, tenant budget limits, and policy-based model routing with safe fallback.
+- [x] Persist organization workspaces, owner/member roles, invitations, and immutable audit events.
+- [x] Add owner-authorized organization membership management and audit-log APIs.
+- [x] Create revocable, expiring, read-only preview links scoped to an app version.
+- [x] Add public preview routing that verifies link expiry, revocation, scope, and read-only access.
+- [x] Build studio controls for budgets, routing policies, share links, membership, roles, and audit history.
+- [x] Add test coverage for routing budgets, shared-preview authorization, organization roles, audit events, and revocation.
+- [x] Add a signed-in invitation acceptance route that consumes an expiring invitation token safely.
+- [x] Bind every public share link to a specific immutable app version and enforce that scope in the preview route.
+- [x] Add organization role-change and member-removal controls with owner/admin permission feedback.
+- [x] Add route-level coverage for share expiry/revocation, audit creation, invitation acceptance, and role-governed membership management.
+- [x] Gate organization role changes and member removal in the interface by owner/admin membership with explicit permission feedback.
+- [x] Add integration coverage for invitation acceptance, member role updates/removals, and resulting audit events.
+- [x] Add explicit API-level coverage for expired and revoked share-link denial.
+- [x] Gate organization management UI in JSX using `canManageOrganization` so non-owner/admin users see view-only member rows and explicit permission messaging without relying on DOM mutation.
+- [x] Add route/integration test coverage for `organization.removeMember` and assert `member.removed` audit-log creation.
+- [x] Verify the extension workflows and save a release checkpoint.

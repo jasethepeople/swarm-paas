@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   reserveTenantGeneration: vi.fn().mockResolvedValue({ allowed: false, usage: { periodKey: "2026-08" } }),
+  resolveTenantModelRoute: vi.fn().mockResolvedValue({ model: "gpt-5-mini", estimatedCostMicros: 2_000, inputTokens: 40 }),
   createGeneratedApp: vi.fn(),
   updateGeneratedApp: vi.fn(),
 }));
@@ -16,6 +17,7 @@ vi.mock("./db", () => ({
   recordTenantGenerationUsage: vi.fn(),
   replaceGeneratedAppFiles: vi.fn(),
   reserveTenantGeneration: mocks.reserveTenantGeneration,
+  resolveTenantModelRoute: mocks.resolveTenantModelRoute,
   updateGeneratedApp: mocks.updateGeneratedApp,
 }));
 

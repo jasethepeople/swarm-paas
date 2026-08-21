@@ -10,6 +10,7 @@ import {
   getGeneratedAppForUser,
   listGeneratedAppVersions,
   recordTenantGenerationUsage,
+  resolveTenantModelRoute,
   replaceGeneratedAppFiles,
   reserveTenantGeneration,
   updateGeneratedApp,
@@ -208,13 +209,16 @@ export async function createZip(project: GeneratedProject, sqliteBundle: Buffer)
 export async function executeAppGeneration(input: { userId: number; prompt: string; model?: SelectableModel; appId?: string; onEvent?: (event: GenerationEvent) => void }) {
   const appId = input.appId || nanoid(18);
   const onEvent = input.onEvent || (() => undefined);
-  const model = input.model && selectableModels.includes(input.model) ? input.model : "gpt-5-mini";
+  const requestedModel = input.model && selectableModels.includes(input.model) ? input.model : "gpt-5-mini";
+  let model: SelectableModel = requestedModel;
   const startingName = titleFromPrompt(input.prompt);
   const startedAt = Date.now();
   let existingApp: Awaited<ReturnType<typeof getGeneratedAppForUser>> | undefined;
   let versionNumber = 1;
   try {
-    const reservation = await reserveTenantGeneration(input.userId);
+    const route = await resolveTenantModelRoute(input.userId, requestedModel, input.prompt);
+    model = route.model as SelectableModel;
+    const reservation = await reserveTenantGeneration(input.userId, route.estimatedCostMicros);
     if (!reservation.allowed) throw new Error(`Tenant generation quota reached for ${reservation.usage.periodKey}`);
     existingApp = input.appId ? await getGeneratedAppForUser(input.appId, input.userId) : undefined;
     if (input.appId && !existingApp) throw new Error("Application not found");
@@ -225,6 +229,7 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
     } else {
       await createGeneratedApp({ id: appId, userId: input.userId, name: startingName, prompt: input.prompt, model });
     }
+    onEvent({ type: "status", message: `Routing to ${model} within tenant policy`, appId });
     onEvent({ type: "status", message: "Interpreting the application brief", appId });
     const generated = await generateProject(input.prompt, model, token => onEvent({ type: "token", text: token, appId }));
     const project = { ...generated.project, files: normalizeGeneratedFiles(generated.project.files) };
@@ -268,7 +273,7 @@ export async function executeAppGeneration(input: { userId: number; prompt: stri
     const artifactBytes = Buffer.byteLength(manifest) + sqliteBundle.byteLength + zipBundle.byteLength;
     await Promise.all([
       createGeneratedAppVersion({ id: nanoid(18), appId, versionNumber, label: existingApp ? `Revision ${versionNumber}` : "Initial assembly", sourceManifestKey: manifestStorage.key, sqliteArtifactKey: sqliteStorage.key, exportArtifactKey: zipStorage.key, schemaSummary: JSON.stringify(project.schema), routes: JSON.stringify(project.routes), componentTree: JSON.stringify(project.components), metadata: JSON.stringify({ name: project.name, summary: project.summary, prompt: input.prompt, model, previewConfig: { title: project.name, description: project.summary, prompt: input.prompt } }), fileSnapshot: JSON.stringify(project.files) }),
-      recordTenantGenerationUsage({ userId: input.userId, inputTokens: generated.usage?.prompt_tokens || 0, outputTokens: generated.usage?.completion_tokens || 0, latencyMs: Date.now() - startedAt, artifactBytes }),
+      recordTenantGenerationUsage({ userId: input.userId, inputTokens: generated.usage?.prompt_tokens || 0, outputTokens: generated.usage?.completion_tokens || 0, estimatedCostMicros: route.estimatedCostMicros, latencyMs: Date.now() - startedAt, artifactBytes }),
     ]);
     onEvent({ type: "artifact", kind: "zip_export", url: zipStorage.url, appId });
     onEvent({ type: "complete", appId });

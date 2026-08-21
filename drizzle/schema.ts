@@ -93,6 +93,8 @@ export const tenantQuotas = mysqlTable("tenant_quotas", {
   userId: int("userId").primaryKey(),
   monthlyGenerationLimit: int("monthlyGenerationLimit").notNull().default(12),
   monthlyTokenLimit: int("monthlyTokenLimit").notNull().default(200000),
+  monthlyBudgetMicros: int("monthlyBudgetMicros").notNull().default(2500000),
+  routingPolicy: mysqlEnum("routingPolicy", ["manual", "balanced", "lowest_cost"]).notNull().default("balanced"),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
@@ -103,6 +105,7 @@ export const tenantUsage = mysqlTable("tenant_usage", {
   generationCount: int("generationCount").notNull().default(0),
   inputTokens: int("inputTokens").notNull().default(0),
   outputTokens: int("outputTokens").notNull().default(0),
+  estimatedCostMicros: int("estimatedCostMicros").notNull().default(0),
   latencyTotalMs: int("latencyTotalMs").notNull().default(0),
   artifactBytes: int("artifactBytes").notNull().default(0),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -124,7 +127,72 @@ export const generatedAppVersions = mysqlTable("generated_app_versions", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("generated_app_versions_app_idx").on(table.appId, table.versionNumber)]);
 
+export const modelRoutingPolicies = mysqlTable("model_routing_policies", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  userId: int("userId").notNull(),
+  model: varchar("model", { length: 96 }).notNull(),
+  inputMicrosPer1k: int("inputMicrosPer1k").notNull(),
+  outputMicrosPer1k: int("outputMicrosPer1k").notNull(),
+  enabled: int("enabled").notNull().default(1),
+  priority: int("priority").notNull().default(100),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("model_routing_policies_user_idx").on(table.userId, table.model)]);
+
+export const organizations = mysqlTable("organizations", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  ownerId: int("ownerId").notNull(),
+  name: varchar("name", { length: 160 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("organizations_owner_idx").on(table.ownerId)]);
+
+export const organizationMembers = mysqlTable("organization_members", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  organizationId: varchar("organizationId", { length: 32 }).notNull(),
+  userId: int("userId").notNull(),
+  role: mysqlEnum("role", ["owner", "admin", "member", "viewer"]).notNull().default("member"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [index("organization_members_org_user_idx").on(table.organizationId, table.userId)]);
+
+export const organizationInvitations = mysqlTable("organization_invitations", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  organizationId: varchar("organizationId", { length: 32 }).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  role: mysqlEnum("role", ["admin", "member", "viewer"]).notNull().default("member"),
+  tokenHash: varchar("tokenHash", { length: 128 }).notNull(),
+  invitedByUserId: int("invitedByUserId").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  acceptedAt: timestamp("acceptedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("organization_invitations_org_idx").on(table.organizationId), index("organization_invitations_token_idx").on(table.tokenHash)]);
+
+export const organizationAuditLogs = mysqlTable("organization_audit_logs", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  organizationId: varchar("organizationId", { length: 32 }).notNull(),
+  actorUserId: int("actorUserId").notNull(),
+  action: varchar("action", { length: 96 }).notNull(),
+  targetType: varchar("targetType", { length: 64 }).notNull(),
+  targetId: varchar("targetId", { length: 64 }),
+  metadata: longtext("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("organization_audit_org_created_idx").on(table.organizationId, table.createdAt)]);
+
+export const appShareLinks = mysqlTable("app_share_links", {
+  id: varchar("id", { length: 32 }).primaryKey(),
+  appId: varchar("appId", { length: 32 }).notNull(),
+  versionId: varchar("versionId", { length: 32 }),
+  tokenHash: varchar("tokenHash", { length: 128 }).notNull(),
+  createdByUserId: int("createdByUserId").notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  revokedAt: timestamp("revokedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("app_share_links_app_idx").on(table.appId), index("app_share_links_token_idx").on(table.tokenHash)]);
+
 export type GeneratedApp = typeof generatedApps.$inferSelect;
 export type GeneratedAppFile = typeof generatedAppFiles.$inferSelect;
 export type GeneratedAppArtifact = typeof generatedAppArtifacts.$inferSelect;
 export type GeneratedAppVersion = typeof generatedAppVersions.$inferSelect;
+export type Organization = typeof organizations.$inferSelect;
+export type OrganizationMember = typeof organizationMembers.$inferSelect;

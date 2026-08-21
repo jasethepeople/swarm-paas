@@ -11,6 +11,7 @@ import { serveStatic, setupVite } from "./vite";
 import { registerGenerationRoutes } from "../generationRoutes";
 import { registerMcpRoutes } from "../mcp";
 import { registerMockGithubRoutes } from "../mockGithubRoutes";
+import { registerSharePreviewRoutes } from "../sharePreviewRoutes";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -42,6 +43,7 @@ async function startServer() {
   registerGenerationRoutes(app);
   registerMcpRoutes(app);
   registerMockGithubRoutes(app);
+  registerSharePreviewRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",
