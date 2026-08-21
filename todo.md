@@ -101,3 +101,11 @@
 - [x] Enforce the full non-sensitive billing activation gate in the Checkout UI and server procedure.
 - [x] Add targeted authorization and access-review count coverage for safeguard controls.
 - [x] Verify the safeguard extension workflows and save a release checkpoint.
+- [x] Add a recent webhook-delivery health trend summary per endpoint.
+- [x] Add a manager-facing collaborator permission recertification checklist and acknowledgment.
+- [x] Add a staged billing go-live checklist that remains non-transactional until pricing is configured.
+- [x] Add targeted test coverage and visual verification for operational maturity controls.
+- [x] Add a structured manager recertification checklist for managers, editors, viewers, and pending invitations before acknowledgment.
+- [x] Add targeted coverage for recertification checklist completion and go-live readiness contract states.
+- [x] Add exact billing readiness-state coverage for pending and fully configured activation contracts.
+- [x] Verify the operational maturity extension workflows and save a release checkpoint.

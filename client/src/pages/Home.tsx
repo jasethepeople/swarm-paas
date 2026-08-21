@@ -3,6 +3,7 @@ import { CollaborationBillingPanel, CollaborationInvitationAcceptance } from "@/
 import { OperationalReadinessPanel } from "@/components/OperationalReadinessPanel";
 import { ReliabilityHandoffPanel } from "@/components/ReliabilityHandoffPanel";
 import { OperationalSafeguardsPanel } from "@/components/OperationalSafeguardsPanel";
+import { OperationalMaturityPanel } from "@/components/OperationalMaturityPanel";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { Highlight, themes } from "prism-react-renderer";
@@ -214,6 +215,7 @@ function Studio() {
       <OperationalReadinessPanel />
       <ReliabilityHandoffPanel appId={selectedAppId} />
       <OperationalSafeguardsPanel appId={selectedAppId} />
+      <OperationalMaturityPanel appId={selectedAppId} canManageApp={activeApp?.collaborationAccess === "manager"} />
     </main></div></div>;
 }
 

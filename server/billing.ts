@@ -3,6 +3,14 @@ import { getOrganizationBillingAccount, upsertOrganizationBillingAccount } from 
 
 const configuredPriceId = () => process.env.VELLUM_STRIPE_PRICE_ID || "";
 
+export function getBillingActivationState(input: Partial<{ secretKeyConfigured: boolean; webhookSecretConfigured: boolean; recurringPriceConfigured: boolean; customerLinked: boolean }> = {}) {
+  const secretKeyConfigured = input.secretKeyConfigured ?? Boolean(process.env.STRIPE_SECRET_KEY);
+  const webhookSecretConfigured = input.webhookSecretConfigured ?? Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+  const recurringPriceConfigured = input.recurringPriceConfigured ?? Boolean(process.env.VELLUM_STRIPE_PRICE_ID);
+  const customerLinked = input.customerLinked ?? false;
+  return { secretKeyConfigured, webhookSecretConfigured, recurringPriceConfigured, customerLinked, canInitiateCheckout: secretKeyConfigured && webhookSecretConfigured && recurringPriceConfigured };
+}
+
 function stripeClient() {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) throw new Error("Stripe is not configured. Open Settings → Payment to complete setup.");

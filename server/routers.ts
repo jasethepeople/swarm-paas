@@ -59,7 +59,7 @@ import { selectableModels } from "./appBuilder";
 import { diffFileSnapshots } from "./versioning";
 import { routingModels } from "./modelRouting";
 import { canManageOrganization, canModifyMember, invitationMatchesUser } from "./governance";
-import { createBillingCheckout, createBillingPortal } from "./billing";
+import { createBillingCheckout, createBillingPortal, getBillingActivationState } from "./billing";
 import { dispatchOperationalWebhook, dispatchWebhookTest, encryptWebhookSecret, isSafeWebhookUrl, webhookEventTypes } from "./webhooks";
 
 const registryProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -251,6 +251,13 @@ export const appRouter = router({
       await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_removed", targetType: "app_collaborator", targetId: String(input.userId), metadata: JSON.stringify({ appId: app.id }) });
       return { success: true };
     }),
+    recertifyCollaborators: registryProcedure.input(z.object({ appId: z.string().min(1).max(32), checklist: z.object({ managersReviewed: z.literal(true), editorsReviewed: z.literal(true), viewersReviewed: z.literal(true), pendingInvitationsReviewed: z.literal(true) }) })).mutation(async ({ ctx, input }) => {
+      const { app } = await requireAppAccess(ctx.user.id, input.appId, "manager");
+      const collaborators = await listAppCollaborators(app.id);
+      const organization = await getOrCreateOrganization(app.userId);
+      await createOrganizationAuditEvent({ organizationId: organization.id, actorUserId: ctx.user.id, action: "app.collaborator_permissions_recertified", targetType: "generated_app", targetId: app.id, metadata: JSON.stringify({ appId: app.id, collaboratorCount: collaborators.length, checklist: input.checklist }) });
+      return { success: true, collaboratorCount: collaborators.length };
+    }),
   }),
   analytics: router({
     overview: protectedProcedure.query(({ ctx }) => getTenantAnalytics(ctx.user.id)),
@@ -298,10 +305,8 @@ export const appRouter = router({
       const membership = await getOrganizationMembership(organization.id, ctx.user.id);
       if (!membership) throw new TRPCError({ code: "FORBIDDEN", message: "Organization membership is required" });
       const [usage, account] = await Promise.all([getTenantAnalytics(organization.ownerId), getOrganizationBillingAccount(organization.id)]);
-      const secretKeyConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
-      const webhookSecretConfigured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
-      const recurringPriceConfigured = Boolean(process.env.VELLUM_STRIPE_PRICE_ID);
-      return { usage, account, canManage: canManageOrganization(membership.role), checkoutConfigured: recurringPriceConfigured, activation: { secretKeyConfigured, webhookSecretConfigured, recurringPriceConfigured, customerLinked: Boolean(account?.stripeCustomerId), canInitiateCheckout: secretKeyConfigured && webhookSecretConfigured && recurringPriceConfigured } };
+      const activation = getBillingActivationState({ customerLinked: Boolean(account?.stripeCustomerId) });
+      return { usage, account, canManage: canManageOrganization(membership.role), checkoutConfigured: activation.recurringPriceConfigured, activation };
     }),
     checkout: protectedProcedure.mutation(async ({ ctx }) => {
       const { organization } = await requireOrganizationManager(ctx.user.id);

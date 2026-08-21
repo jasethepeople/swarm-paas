@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./db", async importOriginal => ({ ...(await importOriginal<typeof import("./db")>()), ...mocks }));
-vi.mock("./billing", () => ({ createBillingCheckout: mocks.createBillingCheckout, createBillingPortal: mocks.createBillingPortal }));
+vi.mock("./billing", async importOriginal => ({ ...(await importOriginal<typeof import("./billing")>()), createBillingCheckout: mocks.createBillingCheckout, createBillingPortal: mocks.createBillingPortal }));
 import { appRouter } from "./routers";
 
 function context(): TrpcContext {
@@ -24,7 +24,7 @@ describe("billing API", () => {
     expect(overview.usage.usage.generations).toBe(2);
     expect(overview.account?.stripeCustomerId).toBe("cus_1");
     expect(overview.canManage).toBe(true);
-    expect(overview.activation).toEqual(expect.objectContaining({ recurringPriceConfigured: false, customerLinked: true, canInitiateCheckout: expect.any(Boolean) }));
+    expect(overview.activation).toEqual(expect.objectContaining({ recurringPriceConfigured: false, customerLinked: true, canInitiateCheckout: false }));
   });
 
   it("delegates checkout and portal creation with the authenticated workspace context", async () => {

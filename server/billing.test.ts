@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createBillingCheckout } from "./billing";
+import { createBillingCheckout, getBillingActivationState } from "./billing";
 
 describe("billing checkout configuration", () => {
   const originalPriceId = process.env.VELLUM_STRIPE_PRICE_ID;
@@ -20,5 +20,10 @@ describe("billing checkout configuration", () => {
     delete process.env.STRIPE_WEBHOOK_SECRET;
     await expect(createBillingCheckout({ organizationId: "org-1", userId: 1, email: "owner@example.com", name: "Owner", origin: "https://vellum.test" })).rejects.toThrow("webhook signing");
     if (originalWebhookSecret) process.env.STRIPE_WEBHOOK_SECRET = originalWebhookSecret;
+  });
+
+  it("derives exact pending and fully configured go-live activation contracts", () => {
+    expect(getBillingActivationState({ secretKeyConfigured: true, webhookSecretConfigured: true, recurringPriceConfigured: false, customerLinked: false })).toEqual({ secretKeyConfigured: true, webhookSecretConfigured: true, recurringPriceConfigured: false, customerLinked: false, canInitiateCheckout: false });
+    expect(getBillingActivationState({ secretKeyConfigured: true, webhookSecretConfigured: true, recurringPriceConfigured: true, customerLinked: true })).toEqual({ secretKeyConfigured: true, webhookSecretConfigured: true, recurringPriceConfigured: true, customerLinked: true, canInitiateCheckout: true });
   });
 });

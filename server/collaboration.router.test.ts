@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getActiveAppCollaborationInvitation: vi.fn(async () => ({ id: "collab-invite-1", appId: "app-1", email: "owner@example.com", access: "editor", invitedByUserId: 1 })),
   createOrUpdateAppCollaborator: vi.fn(async () => undefined),
   acceptAppCollaborationInvitation: vi.fn(async () => undefined),
+  listAppCollaborators: vi.fn(async () => [{ id: "collab-1", appId: "app-1", userId: 2, access: "editor" }]),
   createOrganizationAuditEvent: vi.fn(async () => undefined),
   getOrCreateOrganization: vi.fn(async () => ({ id: "org-1", ownerId: 1, name: "Workspace" })),
 }));
@@ -33,5 +34,14 @@ describe("shared application collaboration", () => {
     expect(mocks.createOrUpdateAppCollaborator).toHaveBeenCalledWith(expect.objectContaining({ appId: "app-1", userId: 1, access: "editor" }));
     expect(mocks.acceptAppCollaborationInvitation).toHaveBeenCalledWith("collab-invite-1");
     expect(mocks.createOrganizationAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "app.collaborator_joined" }));
+  });
+
+  it("records a manager permission-recertification acknowledgment with collaborator scope", async () => {
+    await expect(appRouter.createCaller(context()).apps.recertifyCollaborators({ appId: "app-1", checklist: { managersReviewed: true, editorsReviewed: true, viewersReviewed: true, pendingInvitationsReviewed: true } })).resolves.toEqual({ success: true, collaboratorCount: 1 });
+    expect(mocks.createOrganizationAuditEvent).toHaveBeenCalledWith(expect.objectContaining({ action: "app.collaborator_permissions_recertified", targetId: "app-1" }));
+  });
+
+  it("requires each structured permission review step before acknowledging recertification", async () => {
+    await expect(appRouter.createCaller(context()).apps.recertifyCollaborators({ appId: "app-1", checklist: { managersReviewed: false, editorsReviewed: true, viewersReviewed: true, pendingInvitationsReviewed: true } } as any)).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
