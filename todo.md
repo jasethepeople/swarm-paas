@@ -88,3 +88,9 @@
 - [x] Add test coverage and visual verification for the operational-readiness controls.
 - [x] Add targeted automated coverage for billing activation-state fields and webhook delivery-inspector data.
 - [x] Verify the operational-readiness extension workflows and save a release checkpoint.
+- [x] Add per-endpoint webhook health indicators derived from recent delivery outcomes.
+- [x] Surface pending, accepted, and expired collaboration invitation status in the app workspace.
+- [x] Add a copyable, non-transactional Stripe activation handoff checklist for workspace managers.
+- [x] Add targeted coverage and visual verification for reliability indicators and handoff controls.
+- [x] Add automated coverage for pending, accepted, and expired collaboration invitation status records.
+- [x] Verify the reliability extension workflows and save a release checkpoint.

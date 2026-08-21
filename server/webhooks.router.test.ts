@@ -20,6 +20,7 @@ describe("webhook readiness context", () => {
     const result = await appRouter.createCaller(context()).webhooks.context();
     expect(result.canManage).toBe(true);
     expect(result.endpoints[0]).toMatchObject({ id: "endpoint-1", url: "https://events.example.test/vellum" });
+    expect(result.endpoints[0]).toMatchObject({ health: "healthy", latestDeliveryStatus: "delivered" });
     expect(result.endpoints[0]).not.toHaveProperty("secretCiphertext");
     expect(result.deliveries[0]).toMatchObject({ eventType: "webhook.test", status: "delivered", attempts: 1, responseStatus: 200 });
   });

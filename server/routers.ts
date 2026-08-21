@@ -267,7 +267,10 @@ export const appRouter = router({
       const membership = await getOrganizationMembership(organization.id, ctx.user.id);
       if (!membership) throw new TRPCError({ code: "FORBIDDEN", message: "Organization membership is required" });
       const [endpoints, deliveries] = await Promise.all([listWebhookEndpoints(organization.id), listWebhookDeliveries(organization.id)]);
-      return { endpoints: endpoints.map(({ secretCiphertext, ...endpoint }) => endpoint), deliveries, canManage: canManageOrganization(membership.role) };
+      return { endpoints: endpoints.map(({ secretCiphertext, ...endpoint }) => {
+        const latest = deliveries.find(delivery => delivery.endpointId === endpoint.id);
+        return { ...endpoint, health: latest ? latest.status === "delivered" ? "healthy" as const : "degraded" as const : "unverified" as const, latestDeliveryStatus: latest?.status || null, latestDeliveryAt: latest?.createdAt || null };
+      }), deliveries, canManage: canManageOrganization(membership.role) };
     }),
     create: protectedProcedure.input(z.object({ url: z.string().url().max(512).refine(isSafeWebhookUrl, "Webhook URL must be a public HTTPS endpoint"), events: z.array(z.enum(webhookEventTypes)).min(1).max(webhookEventTypes.length) })).mutation(async ({ ctx, input }) => {
       const { organization } = await requireOrganizationManager(ctx.user.id);
